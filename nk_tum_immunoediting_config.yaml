@@ -1,0 +1,22 @@
+# populate with key parameters!
+project_name: "nk_tum_immunoediting"
+nthreads: 4
+metadata:
+    atacseq:
+        EXP9_5_bam_md5sums: "datasets/metadata/EXP9_5_ATAC_LIBRARY_L5133_BSF_1093_HNL2WDRXY_bams.md5sums"
+        EXP9_6_bam_md5sums: "datasets/metadata/EXP9_6_ATAC_LIBRARY_L5162__BSF_1101_HV3KGDRXY_bams.md5sums"
+        EXP9_7_bam_md5sums: "datasets/metadata/EXP9_7_ATAC_LIBRARY_L5230__BSF_1142_HYKNHDRXY_bams.md5sums"
+        fastq_files: "datasets/metadata/atacseq_fastq.md5sums"  # fastq files after conversion from uBAMs and merging
+        EXP9_5_metadata: "datasets/metadata/metadata_ATACseq1.csv"
+        EXP9_6_metadata: "datasets/metadata/metadata_ATACseq2.csv"
+        EXP9_7_metadata: "datasets/metadata/metadata_ATACseq3.csv"
+    rnaseq:
+        rnaseq_bam_batch1_md5sums: "datasets/metadata/R0108_L5188__BSF_1117_HMV5NBBXY_bams.md5sums"
+        rnaseq_bam_batch2_md5sums: "datasets/metadata/R0114_L5311__BSF_1179_HNYKKBBXY_bams.md5sums"
+        rnaseq_bam_batch3_md5sums: "datasets/metadata/BSF_1241_HGM75DRX2_L1_bams.md5sums"
+        rnaseq_metadata: "datasets/metadata/rnaseq_metadata_complete_batch1_2_3.csv"
+        rnaseq_salmon_files: "datasets/salmon_quant/quantseq_salmon_quant_files_batch1_2_3.txt"
+
+# batch 1+2        rnaseq_metadata: "datasets/metadata/rnaseq_metadata_complete_PR.csv"
+
+    

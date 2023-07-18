@@ -1,0 +1,204 @@
+```{r loading libraries - EDA expression, message=FALSE, eval=TRUE, include=TRUE}
+# import::from(.from = SummarizedExperiment, colData)
+# import::from(.from = DT, datatable)
+# import::from(.from = ggplot2, .all=TRUE)
+# import::from(.from = DataExplorer, plot_bar)
+# import::from(.from = tableone, CreateTableOne)
+# import::from(.from = dplyr, group_by, count)
+
+#import::from(.from = SummarizedExperiment, colData, assay)
+import::from(.from = variancePartition, fitExtractVarPartModel, sortCols, plotVarPart)
+import::from(.from = doParallel, registerDoParallel)
+import::from(.from = parallel, makeCluster, stopCluster)
+
+# import utils scripts
+import::from(.from = here::here("utils/rnaSelectTopVarGenes.R"), "rnaSelectTopVarGenes", .character_only=TRUE)
+import::from(.from = here::here("utils/edaFunctions.R"), "varPartitionEstimate", "generatePCA", "pcaExtractVariance", "pcaPlotVariance", "pcaCorrPCs", "pcaCorrPCsPlot", .character_only=TRUE)
+
+```
+
+
+```{r EDA expression - loading objects, message=FALSE, eval=TRUE, include=TRUE, cache=TRUE}
+experiment_name="nk_tum_immunoedit_complete"
+output_dir <- paste0(results_dir, "/",experiment_name,"/") # "/home/rstudio/workspace/results_dir/nk_tum_immunoedit_complete/" 
+# results_dir defined in the nk_immunoediting.Rmd file
+
+eda_plots_dir <- paste0(output_dir, "eda_plots/")
+dir.create(eda_plots_dir)
+
+# raw and filtered dds
+precomputed_objects_filename <-paste0(experiment_name, "_dds_objects.RData") # "nk_tum_immunoedit_complete_dds_objects.RData" 
+precomputed_objects_file <- file.path(output_dir, precomputed_objects_filename)
+
+# log2 and vsd transformed
+precomputed_transf_objects_filename <- paste0(experiment_name, "_log2_vsd_filt_objects.RData") #"nk_tum_immunoedit_complete_log2_vsd_filt_objects.RData"
+precomputed_transf_objects_file <- file.path(output_dir, precomputed_transf_objects_filename)
+
+# check if object loaded if not load
+if(!exists(precomputed_objects_file)){
+  load(precomputed_objects_file)
+  load(precomputed_transf_objects_file)
+} 
+
+metadata <- tibble::as_tibble(SummarizedExperiment::colData(dds_filt))
+
+key_metadata <- metadata %>%
+  dplyr::select(experiment, condition_tp,condition, timepoint_cell_harvesting, day_cell_harvesting, cell_line_label, technical_replicate) 
+
+# saving metadata
+#openxlsx::write.xlsx(metadata, file = file.path(output_dir, paste0(experiment_name, "_metadata.xlsx")))
+
+# preparing vsd per experiment ----
+experiments <- unique(as.character(vsd_filt$experiment))
+vsd_filt_perExp <- purrr::map(.x = experiments, .f = function(experiment_name){
+  vsd_filt[,vsd_filt$experiment == experiment_name]
+}) %>% setNames(experiments)
+#lapply(vsd_filt_perExp, dim)
+```
+
+```{r EDA expression - define parameters, message=FALSE, eval=TRUE, include=TRUE, cache=TRUE}
+cond_interest <- "condition_tp"   # column of interest for PCA plots etc.
+cond_interest_varPart <- c("condition_tp", "condition", "timepoint_cell_harvesting", "cell_line_label", "technical_replicate", "experiment")
+cond_interest_varPart_corr <- c("condition_tp", "cell_line_label", "experiment", "technical_replicate")
+  
+# #~  (1|technical_replicate) + (1|experiment) + (1|cell_line_label) + (1|condition_tp) 
+fitform_partVariance <- ~(1 | technical_replicate) + (1 | experiment) + (1 | cell_line_label) + (1 | timepoint_cell_harvesting) + (1 | condition) 
+padj_cutoff = 0.05
+log2FC_cutoff = 0.58 #(FC=1.5); log2FC=1.0 # (FC=2)
+var_expl_needed <- 0.6         # at least 60% variance explained needed
+transf_object <- vsd_filt # which object to use for pca, variance partition etc. in case there is e.g. log2norm, rlog,...
+
+```
+
+### Variance partition
+
+```{r EDA expression - variance partition, message=FALSE, eval=TRUE, include=TRUE, cache=TRUE}
+# calculating overall variance partition ----
+variance_partition_all <- varPartitionEstimate(transf_object = transf_object, 
+                                              fitform_partVariance = fitform_partVariance,
+                                              ntop_genes=1000,
+                                              ncores = 12)
+
+# calculating variance partition per experiment ----
+fitform_partVariance_perExperiment <- ~(1 | technical_replicate) + (1 | cell_line_label) + (1 | timepoint_cell_harvesting) + (1 | condition)
+variance_partition_perExperiment <- purrr::map(.x=names(vsd_filt_perExp), .f=function(experiment_name){
+  varPartitionEstimate(transf_object = vsd_filt_perExp[[experiment_name]], 
+                                              fitform_partVariance = fitform_partVariance_perExperiment,
+                                              ntop_genes=1000,
+                                              ncores = 12)
+}) %>% setNames(names(vsd_filt_perExp))
+
+```
+
+```{r Variance partition plot - all, message=FALSE, eval=TRUE, include=TRUE, fig.dim = c(10, 10)}
+#print(key_variables_tableOne$CatTable)
+variance_partition_all_plot <- variance_partition_all$varPart_plot_annot + ggtitle("Variance partition all experiments")
+
+print(variance_partition_all_plot)
+
+ggsave(filename = paste0(eda_plots_dir, "variance_partition_all_plot.png"), 
+       plot=variance_partition_all_plot,
+       width = 20, height = 20, units = "cm")
+
+```
+
+Variance explained by different variables of interest. There seems to be a lot of variation coming from different experiments and cell lines. This will need to be accounted in the design or downstream batch effect removal.
+
+```{r Variance partition table - all, message=FALSE, eval=TRUE, include=TRUE}
+#print(key_variables_tableOne$CatTable)
+variance_partition_all$varPart_stats %>%
+  kableExtra::kbl(caption="Variance partition table - all experiments") %>%
+  kableExtra::kable_material(c("striped", "hover"))
+```
+
+*Please note color coding varies between variance_partition_perExperiment
+```{r Variance partition plot - per experiment, message=FALSE, eval=TRUE, include=TRUE}
+variance_partition_perExperiment_plots <- purrr::map(.x=names(variance_partition_perExperiment), .f = function(experiment_name){
+  variance_partition_perExperiment[[experiment_name]]$varPart_plot_annot + ggtitle(paste0("Variance partition experiment - ", experiment_name))
+}) %>% setNames(names(variance_partition_perExperiment))
+
+variance_partition_perExperiment_plots <- purrr::map(.x=names(variance_partition_perExperiment), .f = function(experiment_name){
+  print(variance_partition_perExperiment_plots[[experiment_name]])
+  ggsave(filename = paste0(eda_plots_dir, paste0("variance_partition_", experiment_name,"_plot.png")), 
+       plot=variance_partition_perExperiment_plots[[experiment_name]],
+       width = 20, height = 20, units = "cm")
+}) %>% setNames(names(variance_partition_perExperiment))
+
+```
+
+### Principal Component Analysis (PCA)
+
+```{r EDA expression - PCA generation, message=FALSE, eval=TRUE, include=TRUE, cache=TRUE}
+# calculating how many components are needed ----
+transf_object_counts_ntop <- rnaSelectTopVarGenes(SummarizedExperiment::assay(transf_object), ntop = 1000, type = "var")
+pca_object <- stats::prcomp(t(transf_object_counts_ntop), center = TRUE)
+pca_results <- pcaExtractVariance(pca_object)
+pca_scree_cumVarExpl <- pcaPlotVariance(pca_results, var_expl_needed = var_expl_needed)
+min_components_needed <- which(pca_results$cummulative_variance > var_expl_needed)[1] # min components to get var_expl_needed 
+
+# calculating components correlation with variables ----
+#TODO:
+# fix - correlation between PCs and variables of interest! - fix sample naming!
+# PC_corr <- pcaCorrPCs(pca_object, metadata[cond_interest_varPart_corr], pcs = 1:min_components_needed, pval_exact = TRUE) 
+# PC_corr_plot <- pcaCorrPCsPlot(PC_corr)
+
+# calculating overall PCA ----
+condition_tp_colors <- RColorBrewer::brewer.pal(length(unique(metadata$condition_tp)),"Dark2")
+names(condition_tp_colors) <- levels(metadata$condition_tp)
+    
+pca_all <- generatePCA(transf_object = transf_object, 
+                       cond_interest_varPart = cond_interest_varPart, 
+                       color_variable = "condition_tp", 
+                       shape_variable = "experiment",
+                       ntop_genes = 1000) +
+      ggtitle("Overall PCA") +
+      ggplot2::scale_color_manual(values = condition_tp_colors)   
+ 
+pca_perExperiment_plots <- purrr::map(.x=names(vsd_filt_perExp), .f = function(experiment_name){
+    pca_plot <- generatePCA(transf_object = vsd_filt_perExp[[experiment_name]], 
+                cond_interest_varPart = cond_interest_varPart, 
+                color_variable = "condition_tp", 
+                shape_variable = "cell_line_label",
+                ntop_genes = 1000)
+  
+    pca_plot + ggtitle(experiment_name) +
+      # make universal color, shape across the whole report!
+      ggplot2::scale_shape_manual(values = c("A" = 16, "B" = 15, "C"=17, "D"=3)) +
+      ggplot2::scale_color_manual(values = condition_tp_colors)   
+}) %>% setNames(names(vsd_filt_perExp))
+
+combined_pca_plot <- ggpubr::ggarrange(pca_perExperiment_plots$EXP9.4, 
+                                       pca_perExperiment_plots$EXP9.5,
+                                       pca_perExperiment_plots$EXP9.6,
+                                       pca_perExperiment_plots$EXP9.7,
+                                       pca_perExperiment_plots$EXP9.8, 
+                                       nrow=3, ncol=2,
+                                       common.legend = FALSE) #patchwork::wrap_plots(pca_perExperiment_plots, ncol=2)
+```
+
+```{r EDA expression - PCA all scree plot, message=FALSE, eval=TRUE, include=TRUE, fig.dim = c(10, 10)}
+
+print(pca_scree_cumVarExpl)
+ggsave(filename = paste0(eda_plots_dir, "pca_scree_cumVarExpl_plot.png"), 
+       plot=pca_scree_cumVarExpl,
+       width = 20, height = 20, units = "cm")
+```
+
+Overall PCA plot:
+```{r EDA expression - PCA all plot, message=FALSE, eval=TRUE, include=TRUE, fig.dim = c(10, 10)}
+
+print(pca_all)
+ggsave(filename = paste0(eda_plots_dir, "pca_all_plot.png"), 
+       plot=pca_all,
+       width = 20, height = 20, units = "cm")
+```
+
+PCA plot per experiment:
+
+```{r EDA expression - PCA per experiment plot, message=FALSE, eval=TRUE, include=TRUE, fig.dim = c(14, 14)}
+
+print(combined_pca_plot)
+ggsave(filename = paste0(eda_plots_dir, "pca_perExperiment_plot.png"), 
+       plot=combined_pca_plot,
+       width = 20, height = 20, units = "cm")
+```

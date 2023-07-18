@@ -1,0 +1,52 @@
+[2022-11-17 11:25:37.388] [jointLog] [info] setting maxHashResizeThreads to 6
+[2022-11-17 11:25:37.388] [jointLog] [info] Fragment incompatibility prior below threshold.  Incompatible fragments will be ignored.
+[2022-11-17 11:25:37.388] [jointLog] [info] Usage of --validateMappings implies use of minScoreFraction. Since not explicitly specified, it is being set to 0.65
+[2022-11-17 11:25:37.389] [jointLog] [info] Setting consensusSlack to selective-alignment default of 0.35.
+[2022-11-17 11:25:37.389] [jointLog] [info] parsing read library format
+[2022-11-17 11:25:37.390] [jointLog] [info] There is 1 library.
+[2022-11-17 11:25:37.548] [jointLog] [info] Loading pufferfish index
+[2022-11-17 11:25:37.658] [jointLog] [info] Loading dense pufferfish index.
+[2022-11-17 11:30:57.699] [jointLog] [info] done
+[2022-11-17 11:30:57.853] [jointLog] [info] Index contained 138045 targets
+[2022-11-17 11:30:57.906] [jointLog] [info] Number of decoys : 66
+[2022-11-17 11:30:57.906] [jointLog] [info] First decoy index : 137940 
+[2022-11-17 11:31:20.126] [jointLog] [info] Thread saw mini-batch with a maximum of 0.14% zero probability fragments
+[2022-11-17 11:31:20.136] [jointLog] [info] Thread saw mini-batch with a maximum of 0.14% zero probability fragments
+[2022-11-17 11:31:20.141] [jointLog] [info] Thread saw mini-batch with a maximum of 0.12% zero probability fragments
+[2022-11-17 11:31:20.143] [jointLog] [info] Thread saw mini-batch with a maximum of 0.18% zero probability fragments
+[2022-11-17 11:31:20.174] [jointLog] [info] Thread saw mini-batch with a maximum of 0.20% zero probability fragments
+[2022-11-17 11:31:20.181] [jointLog] [info] Thread saw mini-batch with a maximum of 0.16% zero probability fragments
+[2022-11-17 11:31:20.230] [jointLog] [info] Computed 23948 rich equivalence classes for further processing
+[2022-11-17 11:31:20.230] [jointLog] [info] Counted 1037204 total reads in the equivalence classes 
+[2022-11-17 11:31:20.235] [jointLog] [warning] 0.798732% of fragments were shorter than the k used to build the index.
+If this fraction is too large, consider re-building the index with a smaller k.
+The minimum read size found was 20.
+
+
+[2022-11-17 11:31:20.235] [jointLog] [info] Number of mappings discarded because of alignment score : 1639644
+[2022-11-17 11:31:20.235] [jointLog] [info] Number of fragments entirely discarded because of alignment score : 121572
+[2022-11-17 11:31:20.235] [jointLog] [info] Number of fragments discarded because they are best-mapped to decoys : 68254
+[2022-11-17 11:31:20.235] [jointLog] [info] Number of fragments discarded because they have only dovetail (discordant) mappings to valid targets : 0
+[2022-11-17 11:31:20.244] [jointLog] [warning] Only 1037204 fragments were mapped, but the number of burn-in fragments was set to 5000000.
+The effective lengths have been computed using the observed mappings.
+
+[2022-11-17 11:31:20.244] [jointLog] [info] Mapping rate = 13.1477%
+
+[2022-11-17 11:31:20.244] [jointLog] [info] finished quantifyLibrary()
+[2022-11-17 11:31:20.485] [jointLog] [info] Starting optimizer
+[2022-11-17 11:31:20.530] [jointLog] [info] Marked 0 weighted equivalence classes as degenerate
+[2022-11-17 11:31:20.536] [jointLog] [info] iteration = 0 | max rel diff. = 734.816
+[2022-11-17 11:31:20.230] [fileLog] [info] 
+At end of round 0
+==================
+Observed 7888874 total fragments (7888874 in most recent round)
+
+[2022-11-17 11:31:21.007] [jointLog] [info] iteration = 100 | max rel diff. = 1.18276
+[2022-11-17 11:31:21.482] [jointLog] [info] iteration = 200 | max rel diff. = 2.34671
+[2022-11-17 11:31:21.956] [jointLog] [info] iteration = 300 | max rel diff. = 0.05093
+[2022-11-17 11:31:22.426] [jointLog] [info] iteration = 400 | max rel diff. = 0.0154079
+[2022-11-17 11:31:22.903] [jointLog] [info] iteration = 500 | max rel diff. = 0.116613
+[2022-11-17 11:31:23.059] [jointLog] [info] iteration = 534 | max rel diff. = 0.00822162
+[2022-11-17 11:31:23.065] [jointLog] [info] Finished optimizer
+[2022-11-17 11:31:23.065] [jointLog] [info] writing output 
+

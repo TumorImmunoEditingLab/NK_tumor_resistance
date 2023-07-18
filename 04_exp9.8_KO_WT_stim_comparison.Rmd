@@ -1,0 +1,773 @@
+```{r Loading libraries, message=FALSE, eval=TRUE, include=TRUE}
+
+# Loading the required dependencies:
+import::from(.from = variancePartition, fitExtractVarPartModel, sortCols, plotVarPart)
+import::from(.from = doParallel, registerDoParallel)
+import::from(.from = parallel, makeCluster, stopCluster)
+# import utils scripts
+import::from(.from = here::here("utils/filterDatasets.R"), "filterDatasets", .character_only=TRUE) # used for filtering
+import::from(.from = here::here("utils/rnaSelectTopVarGenes.R"), "rnaSelectTopVarGenes", .character_only=TRUE)
+import::from(.from = here::here("utils/edaFunctions.R"), "varPartitionEstimate", "generatePCA", "pcaExtractVariance", "pcaPlotVariance", "pcaCorrPCs", "pcaCorrPCsPlot", .character_only=TRUE)
+import::from(.from = here::here("utils/generateResults.R"), "generateResults_upd", .character_only=TRUE) # 
+import::from(.from = here::here("utils/plotDegResults.R"), "plotVolcano","plotVolcano_repel", .character_only=TRUE)
+import::from(.from = here::here("utils/generateEnsemblAnnotation.R"), "generateEnsemblAnnotation", .character_only=TRUE) # used for filtering
+```
+
+```{r project setup, message=FALSE, eval=TRUE, include=TRUE}
+#project setup
+# loading config file ----
+config_file <- file.path( "nk_tum_immunoediting_config.yaml")  # params$config_file; params not found? ; change to project_config.yaml
+config <- yaml::read_yaml(config_file)
+#config <- yaml::read_yaml(params$config_file)
+
+experiment_name="nk_tum_immunoedit_complete_ab2" # this can be a subset analysis - e.g. just batch1,...
+experiment_design="1"  # used only to construct initial dds object
+abs_filt_samples=3
+
+# parameters for annotation
+biomart_host = "http://nov2020.archive.ensembl.org"
+biomart_Ens_version = "Ensembl Genes 102"
+biomart_dataset="mmusculus_gene_ensembl"
+
+# directories
+output_dir = paste0("./results_dir", "/",experiment_name,"/")
+dir.create(output_dir)
+# importing only key functions that are actually used - not to polute namespace!
+import::from(.from = readr, read_csv, cols)
+import::from(magrittr, "%>%")
+import::from(dplyr, mutate, select, filter, rename, arrange, desc, group_by, summarise, ungroup)  # dplyr_mutate = mutate
+import::from(purrr, map)
+import::from(future, plan, multisession, sequential)
+import::from(furrr, furrr_options, future_map2)
+import::from(ggplot2, .all=TRUE) # importing all as there is too many
+import::from(grid, gpar) # needed in complexheatmap
+import::from(kableExtra, kable_styling, kbl)
+import::from(.from = GenomicFeatures, makeTxDbFromGFF)
+import::from(.from = AnnotationDbi, annot_db_keys = keys, annot_db_select = select)
+import::from(.from = tximport, tximport)
+import::from(.from = DESeq2, .all=TRUE)
+
+#table(metadata$condition_tp, metadata$experiment)
+```
+
+```{r experiment information - initial setup, message=FALSE, eval=TRUE, include=TRUE}
+
+# Create a list of comparisons:
+# Full list
+# list_of_comparisons <- list(c("Tumor_plus_WT_NK_timepoint_2", "Tumor_only_timepoint_2"),
+#                             c("Tumor_plus_IFNg_timepoint_2", "Tumor_only_timepoint_2"),
+#                             c("Tumor_plus_PrfKO_NK_timepoint_2", "Tumor_only_timepoint_2"),
+#                             c("Tumor_plus_WT_NK_timepoint_2", "Tumor_plus_IFNg_timepoint_2"),
+#                             c("Tumor_plus_WT_NK_timepoint_2", "Tumor_plus_PrfKO_NK_timepoint_2"),
+#                             c("Tumor_only_timepoint_0", "Tumor_only_timepoint_1"),
+#                             c("Tumor_only_timepoint_0", "Tumor_only_timepoint_2"),
+#                             c("Tumor_only_timepoint_1", "Tumor_only_timepoint_2"),
+#                             c("Tumor_plus_WT_NK_timepoint_2", "Tumor_only_timepoint_1"))
+
+list_of_comparisons <- list(c("Tumor_plus_WT_NK_timepoint_2", "Tumor_only_timepoint_2"),
+                            c("Tumor_plus_IFNg_timepoint_2", "Tumor_only_timepoint_2"),
+                            c("Tumor_plus_PrfKO_NK_timepoint_2", "Tumor_only_timepoint_2"))
+
+experiment_name="nk_tum_immunoedit_complete"
+output_dir <- "/home/rstudio/workspace/results_dir/nk_tum_immunoedit_complete/"
+
+# Loading the data
+# raw and filtered dds
+precomputed_objects_filename <- paste0(experiment_name, "_dds_objects.RData") #"nk_tum_immunoedit_complete_dds_objects.RData" 
+precomputed_objects_file <- file.path(output_dir, precomputed_objects_filename)
+# log2 and vsd transformed
+precomputed_transf_objects_filename <- "nk_tum_immunoedit_complete_log2_vsd_filt_objects.RData"
+precomputed_transf_objects_file <- file.path(output_dir, precomputed_transf_objects_filename)
+# check if object loaded if not load
+if(!exists(precomputed_objects_file)){
+  load(precomputed_objects_file)
+  load(precomputed_transf_objects_file)
+} 
+
+# defining parameters
+abs_filt_samples=3
+padj_cutoff = 0.05
+log2FC_cutoff = 0.58 #(FC=1.5); log2FC=1.0 # (FC=2)
+var_expl_needed <- 0.6         # at least 60% variance explained needed
+
+experiment_subset <- c("EXP9.8") #we use only this experiment
+if(exists("deg_design")) {rm(deg_design)}
+deg_design <- as.formula("~ cell_line_label + condition_tp") #Experiment is missing here, since we have only EXP9.8
+
+# Loading MsigDB geneset collections ----
+gs_hallmark <- hypeR::msigdb_gsets(species = "Mus musculus", category = c("H"), clean=TRUE) 
+gs_C2_kegg <- hypeR::msigdb_gsets(species = "Mus musculus", category = c("C2"), subcategory = "CP:KEGG", clean=TRUE) 
+gs_C5_GOBP <- hypeR::msigdb_gsets(species = "Mus musculus", category = c("C5"), subcategory = "GO:BP", clean=TRUE) 
+gs_C5_GOCC <- hypeR::msigdb_gsets(species = "Mus musculus", category = c("C5"), subcategory = "GO:CC", clean=TRUE) 
+gs_C5_GOMF <- hypeR::msigdb_gsets(species = "Mus musculus", category = c("C5"), subcategory = "GO:MF", clean=TRUE) 
+
+genes_of_interest <- list("Denn2b"="ENSMUSG00000031024",
+                          "Gbp6"="ENSMUSG00000104713",
+                          "H2-K1"="ENSMUSG00000061232",
+                          "Hs3st2"="ENSMUSG00000046321",
+                          "Htra3"="ENSMUSG00000029096",
+                          "Ifi27"="ENSMUSG00000064215",
+                          "Igtp"="ENSMUSG00000078853",
+                          "Irf1"="ENSMUSG00000018899",
+                          "Lgals3bp"="ENSMUSG00000033880",
+                          "Ly6a"="ENSMUSG00000075602",
+                          "Plaat3"="ENSMUSG00000060675",
+                          "Rtp4"="ENSMUSG00000033355",
+                          "Serpina3f"="ENSMUSG00000066363",
+                          "Stat1"="ENSMUSG00000026104")
+
+genes_of_interest_exp9.8 <- list("H2-Eb1" = "ENSMUSG00000060586",
+                                 "Slc16a3"= "ENSMUSG00000025161",
+                                 "H2-Aa"  = "ENSMUSG00000036594",
+                                 "Bnip3"  = "ENSMUSG00000078566",
+                                 "Il1r2"  = "ENSMUSG00000026073",
+                                 "Dapk2"  = "ENSMUSG00000032380",
+                                 "Zfhx3"  = "ENSMUSG00000038872",
+                                 "Dpp7"   = "ENSMUSG00000026958")
+
+
+#specifically for the publication 
+genes_of_interest_exp9.4_9.7 <- list('Ifi44'     ="ENSMUSG00000028037", 
+                                     'Ccl5'      ="ENSMUSG00000035042",
+                                     'Iigp1'     ="ENSMUSG00000054072",
+                                     'Serpina3f' ="ENSMUSG00000066363",
+                                     'Ly6a'      ="ENSMUSG00000075602",
+                                     'Plaat3'    ="ENSMUSG00000060675",
+                                     'Lgals3bp'  ="ENSMUSG00000033880",
+                                     'Ifi27'     ="ENSMUSG00000064215",
+                                     'Gbp6'      ="ENSMUSG00000104713",
+                                     'Rtp4'      ="ENSMUSG00000033355",
+                                     'Stat1'     ="ENSMUSG00000026104",
+                                     'Tap1'      ="ENSMUSG00000037321",
+                                     'H2-K1'     ="ENSMUSG00000061232",
+                                     'B2m'       ="ENSMUSG00000060802",
+                                     'Igtp'      ="ENSMUSG00000078853",
+                                     'Gtf2ird1'  ="ENSMUSG00000023079",
+                                     'Cdc42ep4'  ="ENSMUSG00000041598",
+                                     'Hoxb6'     ="ENSMUSG00000000690",
+                                     'Bfsp2'     ="ENSMUSG00000032556",
+                                     'Sox6'      ="ENSMUSG00000051910",
+                                     'Tgm2'      ="ENSMUSG00000037820",
+                                     'Adprhl1'   ="ENSMUSG00000031448")
+
+```
+
+```{r The main analysis part, message=FALSE, eval=TRUE, include=TRUE}
+# this will be a counter 
+cid <- 0
+
+#Star of the loop
+for (comparison_i in list_of_comparisons){
+  cid <- cid + 1
+  #determine the name of the comparison
+  deg_name <- paste0(cid, comparison_i[1], comparison_i[2]) #"c1_Tumor_plus_WT_NK_timepoint_2_VS_Tumor_only_timepoint_2"
+  deg_dir <- file.path(output_dir, paste0("deg_", deg_name, "/"))
+  dir.create(deg_dir)
+  
+  #this is the tow sample that we are going to compare between
+  condition_tp_subset <- comparison_i
+  
+  # preparing dds and vsd objects for the main project comparison
+  precomputed_objects_deg_filename <- paste0(deg_name, "_dds_objects.RData")
+  precomputed_objects_deg_file <- file.path(deg_dir, precomputed_objects_deg_filename)
+  
+  precomputed_transf_objects_deg_filename <- paste0(deg_name, "_log2_vsd_filt_objects.RData")
+  precomputed_transf_objects_deg_file <- file.path(deg_dir, precomputed_transf_objects_deg_filename)
+  
+  # just in case remove any existing subsets
+  if(exists("dds_subset")) {rm(dds_subset)}
+  if(exists("dds_subset_filt")) {rm(dds_subset_filt)}
+  if(exists("vsd_subset")) {rm(vsd_subset)}
+  
+  if(!file.exists(precomputed_objects_deg_file)){
+    
+    cat("RNA objects file '", precomputed_objects_deg_filename, "' does not exist in the OUTPUT_DIR...\n")
+    cat("generating", precomputed_objects_deg_filename, "\n")
+    
+    dds_subset <- dds_filt[ , (dds_filt$condition_tp %in% condition_tp_subset) & (dds_filt$experiment %in% experiment_subset)]  
+    
+    # Dropping levels
+    dds_subset$condition_tp <- droplevels(dds_subset$condition_tp)
+    table(dds_subset$condition_tp)
+    dds_subset$experiment <- droplevels(dds_subset$experiment)
+    table(dds_subset$experiment)
+    dds_subset$experiment <- droplevels(dds_subset$experiment)
+    dds_subset$cell_line_label <- droplevels(dds_subset$cell_line_label)
+    
+    # filtering lowly expressed genes
+    dds_subset_filt <- filterDatasets(dds_subset, 
+                                      abs_filt = TRUE, 
+                                      abs_filt_samples = abs_filt_samples) # at least in N samples, which is a smallest group size
+    
+    design(dds_subset_filt) <- deg_design
+    dds_subset_filt <- DESeq2::estimateSizeFactors(dds_subset_filt)
+    dds_subset_filt <- DESeq2::DESeq(dds_subset_filt) # do not replace outliers based on replicates
+    
+    cat("saving...", precomputed_objects_file, "\n")
+    cat("...into:", output_dir, "\n")
+    save(dds_subset, dds_subset_filt, ensemblAnnot,  file = precomputed_objects_deg_file)
+    
+  } else{
+    cat("RNA objects file '", precomputed_objects_deg_filename, "' exist...loading\n")
+    load(precomputed_objects_deg_file)
+  }
+  
+  #transformation after filtering
+  if(!file.exists(precomputed_transf_objects_deg_file)){
+    # transformation
+    log2_norm_subset_filt <- DESeq2::normTransform(dds_subset_filt)
+    vsd_subset_filt <- DESeq2::vst(dds_subset_filt, blind = FALSE) # using blind=FALSE utilize design info; blind = TRUE for QC
+    save(log2_norm_subset_filt, vsd_subset_filt,   
+         file = precomputed_transf_objects_deg_file)
+  } else{
+    load(precomputed_transf_objects_deg_file)
+  }
+  
+  rm(key_metadata_subset, key_variables_tableOne) # in case this exists from previous runs
+  key_metadata_subset <- as.data.frame(colData(dds_subset)) %>%
+                         dplyr::select(experiment, condition_tp, cell_line_label, technical_replicate) 
+  
+  key_variables_tableOne <- tableone::CreateTableOne(vars = colnames(dplyr::select(key_metadata_subset, -condition_tp)), 
+                                                     strata = c("condition_tp"), 
+                                                     data = key_metadata_subset)
+  
+  tableone::kableone(key_variables_tableOne$CatTable,
+                     caption = "Overview of number of samples in different categories (experiment, condition,...).") %>%
+                    kableExtra::kable_material(c("striped", "hover"))
+  
+  transf_object <- vsd_subset_filt
+  
+  #Before removing Batch Effect
+  pca_deg_plotCellLabel <- generatePCA(transf_object = transf_object, 
+                                       cond_interest_varPart = c("condition_tp", "cell_line_label", "experiment"), 
+                                       color_variable = "condition_tp", 
+                                       shape_variable = "cell_line_label",
+                                       ntop_genes = 1000) +
+                            ggtitle(paste(comparison_i, "Comparison. Dataset Before Batch Correction"))
+  #plot(pca_deg_plotCellLabel)
+  
+  # Remove batch effect (only for the cell_line_label)
+  transf_batch_NObatch_cell_label <- vsd_subset_filt
+  transf_batch_NObatch_cell_label_count <- limma::removeBatchEffect(SummarizedExperiment::assay(transf_batch_NObatch_cell_label), 
+                                                                    transf_batch_NObatch_cell_label$cell_line_label)
+  SummarizedExperiment::assay(transf_batch_NObatch_cell_label) <- transf_batch_NObatch_cell_label_count
+  
+  pca_deg_NObatch_cell_label <- generatePCA(transf_object = transf_batch_NObatch_cell_label, 
+                                            cond_interest_varPart = c("condition_tp", "cell_line_label"), 
+                                            color_variable = "condition_tp", 
+                                            shape_variable = "cell_line_label",
+                                            ntop_genes = 1000) +
+                            ggtitle(paste(comparison_i, "Comparison. Removed batchEffect - cell_line"))
+  #plot(pca_deg_NObatch_cell_label)
+  
+  PCA_batch_highlightCellLines_merged <- ggpubr::ggarrange(pca_deg_plotCellLabel, 
+                                                           pca_deg_NObatch_cell_label, 
+                                                           common.legend = TRUE)
+  
+  ggsave(filename = paste0(deg_dir, comparison_i[1], "_VS_",comparison_i[2], "batch_correction.png"), 
+         plot=PCA_batch_highlightCellLines_merged,
+         width = 40, height = 20, units = "cm")
+
+  
+  #Generate results
+  deg_comparison_results <- generateResults_upd(dds_object = dds_subset_filt,
+                                                          coeff_name = resultsNames(dds_subset_filt)[3],
+                                                          cond_numerator = comparison_i[1],
+                                                          cond_denominator = comparison_i[2],
+                                                          cond_variable="condition_tp")
+  #export it as xlsx table
+  openxlsx::write.xlsx(deg_comparison_results, file = file.path(deg_dir, paste0("deg", comparison_i[1], '_vs_', comparison_i[2], "_results.xlsx")))
+
+  #generating GOBP GOCC GOMF
+  deg_comparison_results_enrichment_C5_GOBP <- hypeR::hypeR(signature = deg_comparison_results$results_signif$mgi_symbol,
+                                                            genesets = gs_C5_GOBP,
+                                                            test="hypergeometric",
+                                                            background=nrow(dds_subset_filt))
+  deg_comparison_results_enrichment_C5_GOCC <- hypeR::hypeR(signature = deg_comparison_results$results_signif$mgi_symbol,
+                                                            genesets = gs_C5_GOCC,
+                                                            test="hypergeometric",
+                                                            background=nrow(dds_subset_filt))
+  deg_comparison_results_enrichment_C5_GOMF <- hypeR::hypeR(signature = deg_comparison_results$results_signif$mgi_symbol,
+                                                            genesets = gs_C5_GOMF,
+                                                            test="hypergeometric",
+                                                            background=nrow(dds_subset_filt))
+
+  # hypeR::hyp_show(hyp_obj$data$clA, simple = FALSE)
+  hypeR::hyp_to_excel(deg_comparison_results_enrichment_C5_GOBP, file_path=file.path(deg_dir, paste0(comparison_i[1], comparison_i[2],"_enrichment_C5_GOBP.xlsx")))
+  hypeR::hyp_to_excel(deg_comparison_results_enrichment_C5_GOCC, file_path=file.path(deg_dir, paste0(comparison_i[1], comparison_i[2],"_enrichment_C5_GOCC.xlsx")))
+  hypeR::hyp_to_excel(deg_comparison_results_enrichment_C5_GOMF, file_path=file.path(deg_dir, paste0(comparison_i[1], comparison_i[2],"_enrichment_C5_GOMF.xlsx")))
+  # plotting enrichment results ----
+  deg_comparison_results_enrichment_C5_GOBP_plot <- hypeR::hyp_dots(deg_comparison_results_enrichment_C5_GOBP, merge=TRUE, fdr=0.05, top = 20, abrv=70, val="fdr", title=paste0("GOBP: ",comparison_i[1], comparison_i[2]))
+  deg_comparison_results_enrichment_C5_GOCC_plot <- hypeR::hyp_dots(deg_comparison_results_enrichment_C5_GOCC, merge=TRUE, fdr=0.05, top = 20, abrv=70, val="fdr", title=paste0("GOCC: ",comparison_i[1], comparison_i[2]))
+  deg_comparison_results_enrichment_C5_GOMF_plot <- hypeR::hyp_dots(deg_comparison_results_enrichment_C5_GOMF, merge=TRUE, fdr=0.05, top = 20, abrv=70, val="fdr", title=paste0("GOMF: ",comparison_i[1], comparison_i[2]))
+
+  ggsave(filename = paste0(deg_dir, comparison_i[1], "_VS_",comparison_i[2], "_GOBP_plot.png"),
+         plot=deg_comparison_results_enrichment_C5_GOBP_plot,
+         width = 20, height = 20, units = "cm")
+
+  ggsave(filename = paste0(deg_dir, comparison_i[1], "_VS_",comparison_i[2], "_GOCC_plot.png"),
+         plot=deg_comparison_results_enrichment_C5_GOCC_plot,
+         width = 20, height = 20, units = "cm")
+
+  ggsave(filename = paste0(deg_dir, comparison_i[1], "_VS_",comparison_i[2], "_GOMF_plot.png"),
+         plot=deg_comparison_results_enrichment_C5_GOMF_plot,
+         width = 20, height = 20, units = "cm")
+  
+  # volcano plot
+  deg_comparison_results_volcano_plot <- plotVolcano_repel(dds_results_obj = deg_comparison_results$results_all,
+                                                    genes_of_interest = genes_of_interest,
+                                                    genes_of_interest2 = genes_of_interest_exp9.8,
+                                                    plot_title = paste0(comparison_i[1], ' vs ', comparison_i[2]),
+                                                    max_overlaps = 30)
+
+  ggsave(filename = paste0(deg_dir, comparison_i[1], "_VS_",comparison_i[2], "_volcano_plot.png"),
+         plot=deg_comparison_results_volcano_plot,
+         width = 20, height = 20, units = "cm")
+
+  ggsave(filename = paste0(deg_dir, comparison_i[1], "_VS_",comparison_i[2], "_volcano_plot.eps"),
+         plot=deg_comparison_results_volcano_plot,
+         width = 20, height = 20, units = "cm")
+  
+  print(deg_comparison_results_volcano_plot)
+
+  # heatmap and heatmap batch corrected - corrected
+  
+  save_pheatmap_pdf <- function(x, filename, width=7, height=7) {
+    stopifnot(!missing(x))
+    stopifnot(!missing(filename))
+    pdf(filename, width=width, height=height)
+    grid::grid.newpage()
+    grid::grid.draw(x$gtable)
+    dev.off()
+  }
+  
+  metadata_heatmap <- as.data.frame(colData(dds_subset))
+  heatmap_counts <- SummarizedExperiment::assay(transf_object)
+  heatmap_counts_NObatch <- SummarizedExperiment::assay(transf_batch_NObatch_cell_label) # removed xperiment batch effects! ? use experimen+cell_line removed???
+  heatmap_counts_deg <- heatmap_counts[rownames(heatmap_counts) %in% deg_comparison_results$results_signif$ensembl_id, ]
+  heatmap_counts_NObatch_deg <- heatmap_counts_NObatch[rownames(heatmap_counts_NObatch) %in% deg_comparison_results$results_signif$ensembl_id, ]
+  annotation_col <- metadata_heatmap %>%
+    dplyr::select(cell_line_label, condition_tp) %>% # condition, timepoint_cell_harvesting,
+    dplyr::arrange(condition_tp, cell_line_label)
+  heatmap_counts_deg_ord <- heatmap_counts_deg[, match(rownames(annotation_col), colnames(heatmap_counts_deg))]
+  heatmap_counts_NObatch_deg_ord <- heatmap_counts_NObatch_deg[, match(rownames(annotation_col), colnames(heatmap_counts_NObatch_deg))]
+  ensembl2symbol_annot <- deg_comparison_results$results_all %>%
+    dplyr::select(ensembl_id, mgi_symbol)
+
+ 
+
+  color.scheme <- rev(RColorBrewer::brewer.pal(8,"RdBu")) # generate the color scheme to use
+
+  ann_colors = list(
+    experiment = c(EXP9.8 = "grey")
+  )
+
+  # ,                  filename = paste0(deg_TpNK_tp2_vs_Tonly_tp1_DIR, "tp2_vs_tp1_inclEXP9_7_heatmap_intersect_54genes.pdf")
+  heatmap_result <- pheatmap::pheatmap(heatmap_counts_NObatch_deg_ord,
+                                       main = "Heatmap of signif. DEG - removed cell line BatchEffect",
+                                       scale = "row",
+                                       annotation_col = annotation_col,
+                                       annotation_colors = ann_colors,
+                                       #annotation_row = row_annot_symbols,
+                                       show_colnames = FALSE,
+                                       show_rownames = FALSE,
+                                       cluster_cols = FALSE,
+                                       #cluster_rows = counts_deg_ord_row_cor_hclust,
+                                       color = color.scheme,
+                                       fontsize = 10, fontsize_row = 10 #height=10, cellwidth = 11, cellheight = 11
+  )
+  save_pheatmap_pdf(filename = paste0(deg_dir, comparison_i[1], "_VS_",comparison_i[2], "_heatmap_batch_eff_removed.pdf"),
+                    x=heatmap_result,
+                    width = 10, height = 10)
+  
+  ggsave(filename = paste0(deg_dir, comparison_i[1], "_VS_",comparison_i[2], "_heatmap_batch_eff_removed.png"),
+         plot=heatmap_result,
+         width = 10, height = 10, units = "in")
+
+  #Heatmap not corrected for the batch effect
+  heatmap_result <- pheatmap::pheatmap(heatmap_counts_deg_ord,
+                                       main = "Heatmap of signif. DEG",
+                                       scale = "row",
+                                       annotation_col = annotation_col,
+                                       annotation_colors = ann_colors,
+                                       #annotation_row = row_annot_symbols,
+                                       show_colnames = FALSE,
+                                       show_rownames = FALSE,
+                                       cluster_cols = FALSE,
+                                       #cluster_rows = counts_deg_ord_row_cor_hclust,
+                                       color = color.scheme,
+                                       fontsize = 10, fontsize_row = 10 #height=10, cellwidth = 11, cellheight = 11
+  )
+  save_pheatmap_pdf(filename = paste0(deg_dir, comparison_i[1], "_VS_",comparison_i[2], "_heatmap.pdf"),
+                    x=heatmap_result,
+                    width = 10, height = 10)
+  
+  ggsave(filename = paste0(deg_dir, comparison_i[1], "_VS_",comparison_i[2], "_heatmap.png"),
+         plot=heatmap_result,
+         width = 10, height = 10, units = "in")
+  
+}                            
+```
+
+
+
+# Plotting the Venn Diagramm for the comparisons:
+# | Deg | Group 1                         | Group 2                         |
+# | --- | ------------------------------- | ------------------------------- |
+# | 1   | Tumor_plus_WT_NK_timepoint_2    | Tumor_only_timepoint_2          |
+# | 2   | Tumor_plus_IFNg_timepoint_2     | Tumor_only_timepoint_2          |
+# | 3   | Tumor_plus_PrfKO_NK_timepoint_2 | Tumor_only_timepoint_2          |
+
+```{r 04 - intersection of DEGs, message=FALSE, eval=TRUE, include=TRUE}
+
+Deg1_filename <-  paste0("~/workspace/results_dir/nk_tum_immunoedit_complete/deg_1Tumor_plus_WT_NK_timepoint_2Tumor_only_timepoint_2/degTumor_plus_WT_NK_timepoint_2_vs_Tumor_only_timepoint_2_results.xlsx")
+Deg2_filename <-  paste0("~/workspace/results_dir/nk_tum_immunoedit_complete/deg_2Tumor_plus_IFNg_timepoint_2Tumor_only_timepoint_2/degTumor_plus_IFNg_timepoint_2_vs_Tumor_only_timepoint_2_results.xlsx")
+Deg3_filename <-  paste0("~/workspace/results_dir/nk_tum_immunoedit_complete/deg_3Tumor_plus_PrfKO_NK_timepoint_2Tumor_only_timepoint_2/degTumor_plus_PrfKO_NK_timepoint_2_vs_Tumor_only_timepoint_2_results.xlsx")
+
+Deg1 <- openxlsx::read.xlsx(Deg1_filename,sheet = 'results_signif')
+Deg1_ens <- Deg1[,c('mgi_symbol', 'ensembl_id')]
+Deg1 <- Deg1$mgi_symbol
+
+Deg2 <- openxlsx::read.xlsx(Deg2_filename,sheet = 'results_signif')
+Deg2_ens <- Deg2[, c('mgi_symbol', 'ensembl_id')]
+Deg2 <- Deg2$mgi_symbol
+
+Deg3 <- openxlsx::read.xlsx(Deg3_filename,sheet = 'results_signif')
+Deg3_ens <- Deg3[, c('mgi_symbol', 'ensembl_id')]
+Deg3 <- Deg3$mgi_symbol
+
+Deg_list <-  list("Tmr+WT_NK TP2 vs T only TP2" = Deg1,
+                  "Tmr+IFNg TP2 vs T only TP2" = Deg2, 
+                  "Tmr+PrfKO NK TP2 vs T only TP2" = Deg3)
+
+library(ggvenn)
+
+ven_diag <- ggvenn(Deg_list)
+ven_diag
+
+
+#order the genes for the further Heatmap
+Deg12_intersect <- intersect(Deg1, Deg2)
+Deg123_intersect <- intersect(Deg12_intersect, Deg3)
+Deg23_intersect <- intersect(Deg2, Deg3)
+Deg31_intersect <- intersect(Deg3, Deg1)
+
+Deg12_intersect <- Deg12_intersect[!(Deg12_intersect %in% Deg123_intersect)]
+Deg23_intersect <- Deg23_intersect[!(Deg23_intersect %in% Deg123_intersect)]
+Deg31_intersect <- Deg31_intersect[!(Deg31_intersect %in% Deg123_intersect)]
+
+Deg1_unique <- Deg1[!(Deg1 %in% Deg12_intersect | 
+                      Deg1 %in% Deg31_intersect |
+                      Deg1 %in% Deg123_intersect)]
+
+Deg2_unique <- Deg2[!(Deg2 %in% Deg12_intersect |
+                      Deg2 %in% Deg23_intersect |
+                      Deg2 %in% Deg123_intersect)]
+
+Deg3_unique <- Deg3[!(Deg3 %in% Deg31_intersect |
+                      Deg3 %in% Deg23_intersect |
+                      Deg3 %in% Deg123_intersect)]
+
+List_of_genes_ordered <- c(Deg31_intersect,
+                           Deg1_unique,
+                           Deg12_intersect,
+                           Deg2_unique,
+                           Deg23_intersect,
+                           Deg3_unique,
+                           Deg123_intersect)
+
+Deg_ens <- rbind(Deg1_ens, Deg2_ens, Deg3_ens)
+Deg_ens <- unique(Deg_ens)
+
+Deg_ens_ord <- Deg_ens[match(List_of_genes_ordered, Deg_ens$mgi_symbol),]
+
+```
+
+```{r 04 experiment information - heatmap , message=FALSE, eval=TRUE, include=TRUE}
+
+#These are the data that will be used for the heatmap
+
+list_of_comparisons_venn_heatmap <- c("Tumor_plus_WT_NK_timepoint_2", 
+                                      "Tumor_plus_IFNg_timepoint_2", 
+                                      "Tumor_plus_PrfKO_NK_timepoint_2", 
+                                      "Tumor_only_timepoint_2")
+experiment_subset <- c("EXP9.8")
+
+dds_subset_venn_heatmap <- dds_filt[ , (dds_filt$condition_tp %in% list_of_comparisons_venn_heatmap) & (dds_filt$experiment %in% experiment_subset)]  
+metadata_heatmap <- as.data.frame(colData(dds_subset_venn_heatmap))
+heatmap_counts <- SummarizedExperiment::assay(dds_subset_venn_heatmap)
+heatmap_counts_deg <- heatmap_counts[rownames(heatmap_counts) %in% Deg_ens_ord$ensembl_id,]
+annotation_col <- metadata_heatmap %>%
+  dplyr::select(cell_line_label, condition_tp) %>% # condition, timepoint_cell_harvesting,
+  dplyr::arrange(condition_tp, cell_line_label)
+heatmap_counts_deg_ord <- heatmap_counts_deg[, match(rownames(annotation_col), colnames(heatmap_counts_deg))]
+heatmap_counts_deg_ord <- heatmap_counts_deg_ord[match(Deg_ens_ord$ensembl_id, rownames(heatmap_counts_deg_ord)),]
+rownames(heatmap_counts_deg_ord) == Deg_ens_ord$ensembl_id
+rownames(heatmap_counts_deg_ord) <- Deg_ens_ord$mgi_symbol
+
+color.scheme <- rev(RColorBrewer::brewer.pal(8,"RdBu")) # generate the color scheme to use
+ann_colors = list(
+  experiment = c(EXP9.4 = "#4682B4", EXP9.5 = "#7846B4", EXP9.6 = "#B47846", EXP9.7 = "#82B446", EXP9.8 = "grey")
+)
+
+heatmap_result <- pheatmap::pheatmap(heatmap_counts_deg_ord,
+                                     main = "Heatmap of signif. DEG",
+                                     scale = "row",
+                                     annotation_col = annotation_col,
+                                     annotation_colors = ann_colors,
+                                     #annotation_row = row_annot_symbols,
+                                     show_colnames = FALSE,
+                                     show_rownames = TRUE,
+                                     cluster_cols = FALSE,
+                                     cluster_rows = T,
+                                     annotation_names_row = TRUE,
+                                     #cluster_rows = counts_deg_ord_row_cor_hclust,
+                                     color = color.scheme,
+                                     fontsize = 10, fontsize_row = 10 #height=10, cellwidth = 11, cellheight = 11
+)
+# This heatmap doesn't look so great.
+
+# save the DEG list:
+List_of_genes_ordered_forxlsx <- list("Deg1_T+WT_NK_TP2_VS_To_TP2" = Deg1,
+                                      "Deg2_T+IFNg_TP2_VS_To_TP2" = Deg2,
+                                      "Deg3_T+PrfKO_NK_TP2_VS_To_TP2" = Deg3,
+                                      "Deg31_exlusive_intersect" = Deg31_intersect,
+                                      "Deg1_unique" = Deg1_unique,
+                                      "Deg12_exlusive_intersect" = Deg12_intersect,
+                                      "Deg2_unique" = Deg2_unique,
+                                      "Deg23_exlusive_intersect" = Deg23_intersect,
+                                      "Deg3_unique" = Deg3_unique,
+                                      "Deg123_intersect" = Deg123_intersect)
+
+openxlsx::write.xlsx(List_of_genes_ordered_forxlsx, 
+                     "~/workspace/results_dir/nk_tum_immunoedit_complete/overlaping_genes_deg_1_2_3.xlsx")
+
+# adding supplementary information (p-val, L2FC, etc for genes)
+# read the DEG files again
+Deg1_xlsx <- openxlsx::read.xlsx(Deg1_filename,sheet = 'results_signif')
+Deg1_xlsx <- Deg1_xlsx %>% select("ensembl_id", "mgi_symbol", "mgi_description",  "log2FoldChange", "padj")
+
+Deg2_xlsx <- openxlsx::read.xlsx(Deg2_filename,sheet = 'results_signif')
+Deg2_xlsx <- Deg2_xlsx %>% select("ensembl_id", "mgi_symbol", "mgi_description",   "log2FoldChange",  "padj")
+
+Deg3_xlsx <- openxlsx::read.xlsx(Deg3_filename,sheet = 'results_signif')
+Deg3_xlsx <- Deg3_xlsx %>% select("ensembl_id", "mgi_symbol", "mgi_description",  "log2FoldChange", "padj")
+
+
+List_of_genes_ordered_forxlsx_sup <- List_of_genes_ordered_forxlsx
+
+List_of_genes_ordered_forxlsx_sup$`Deg1_T+WT_NK_TP2_VS_To_TP2` <- Deg1_xlsx[match(List_of_genes_ordered_forxlsx_sup$`Deg1_T+WT_NK_TP2_VS_To_TP2`, Deg1_xlsx$mgi_symbol),]
+List_of_genes_ordered_forxlsx_sup$`Deg2_T+IFNg_TP2_VS_To_TP2` <- Deg2_xlsx[match(List_of_genes_ordered_forxlsx_sup$`Deg2_T+IFNg_TP2_VS_To_TP2`, Deg2_xlsx$mgi_symbol),]
+List_of_genes_ordered_forxlsx_sup$`Deg3_T+PrfKO_NK_TP2_VS_To_TP2` <- Deg3_xlsx[match(List_of_genes_ordered_forxlsx_sup$`Deg3_T+PrfKO_NK_TP2_VS_To_TP2`, Deg3_xlsx$mgi_symbol),]
+
+List_of_genes_ordered_forxlsx_sup$Deg1_unique <-  Deg1_xlsx[match(List_of_genes_ordered_forxlsx_sup$Deg1_unique, Deg1_xlsx$mgi_symbol),]
+List_of_genes_ordered_forxlsx_sup$Deg2_unique <-  Deg2_xlsx[match(List_of_genes_ordered_forxlsx_sup$Deg2_unique, Deg2_xlsx$mgi_symbol),]
+List_of_genes_ordered_forxlsx_sup$Deg3_unique <-  Deg3_xlsx[match(List_of_genes_ordered_forxlsx_sup$Deg3_unique, Deg3_xlsx$mgi_symbol),]
+
+Deg31_excl <- Deg3_xlsx[match(List_of_genes_ordered_forxlsx_sup$Deg31_exlusive_intersect, Deg3_xlsx$mgi_symbol),] %>%
+              rename("DEG3_log2FoldChange" = "log2FoldChange", "DEG3_padj" = "padj")
+Deg13_excl <- Deg1_xlsx[match(List_of_genes_ordered_forxlsx_sup$Deg31_exlusive_intersect, Deg1_xlsx$mgi_symbol),] %>%
+  select("log2FoldChange", "padj") %>%
+  rename("DEG1_log2FoldChange" = "log2FoldChange", "DEG1_padj" = "padj")
+List_of_genes_ordered_forxlsx_sup$Deg31_exlusive_intersect <- cbind(Deg31_excl, Deg13_excl)
+
+Deg21_excl <- Deg2_xlsx[match(List_of_genes_ordered_forxlsx_sup$Deg12_exlusive_intersect, Deg2_xlsx$mgi_symbol),] %>%
+  rename("DEG2_log2FoldChange" = "log2FoldChange", "DEG2_padj" = "padj")
+Deg12_excl <- Deg1_xlsx[match(List_of_genes_ordered_forxlsx_sup$Deg12_exlusive_intersect, Deg1_xlsx$mgi_symbol),] %>%
+  select("log2FoldChange", "padj") %>%
+  rename("DEG1_log2FoldChange" = "log2FoldChange", "DEG1_padj" = "padj")
+List_of_genes_ordered_forxlsx_sup$Deg12_exlusive_intersect <- cbind(Deg21_excl, Deg12_excl)
+
+Deg23_excl <- Deg2_xlsx[match(List_of_genes_ordered_forxlsx_sup$Deg23_exlusive_intersect, Deg2_xlsx$mgi_symbol),] %>%
+  rename("DEG2_log2FoldChange" = "log2FoldChange", "DEG2_padj" = "padj")
+Deg32_excl <- Deg3_xlsx[match(List_of_genes_ordered_forxlsx_sup$Deg23_exlusive_intersect, Deg3_xlsx$mgi_symbol),] %>%
+  select("log2FoldChange", "padj") %>%
+  rename("DEG3_log2FoldChange" = "log2FoldChange", "DEG3_padj" = "padj")
+List_of_genes_ordered_forxlsx_sup$Deg12_exlusive_intersect <- cbind(Deg23_excl, Deg32_excl)
+
+
+Deg123_1 <- Deg1_xlsx[match(List_of_genes_ordered_forxlsx_sup$Deg123_intersect, Deg1_xlsx$mgi_symbol),] %>%
+  rename("DEG1_log2FoldChange" = "log2FoldChange", "DEG1_padj" = "padj")
+
+Deg123_2 <- Deg2_xlsx[match(List_of_genes_ordered_forxlsx_sup$Deg123_intersect, Deg2_xlsx$mgi_symbol),] %>%
+  select("log2FoldChange", "padj") %>%
+  rename("DEG2_log2FoldChange" = "log2FoldChange", "DEG2_padj" = "padj")
+
+Deg123_3 <- Deg3_xlsx[match(List_of_genes_ordered_forxlsx_sup$Deg123_intersect, Deg3_xlsx$mgi_symbol),] %>%
+  select("log2FoldChange", "padj") %>%
+  rename("DEG3_log2FoldChange" = "log2FoldChange", "DEG3_padj" = "padj")
+
+List_of_genes_ordered_forxlsx_sup$Deg123_intersect <- cbind(Deg123_1, Deg123_2, Deg123_3)
+
+
+openxlsx::write.xlsx(List_of_genes_ordered_forxlsx_sup, 
+                     "~/workspace/results_dir/nk_tum_immunoedit_complete/overlaping_genes_deg_1_2_3_with_extra.xlsx")
+
+
+```
+
+
+
+
+##### Plots for the publication:####
+# Plotting the PCA plot of the 4 groups
+#Tumor_plus_WT_NK_timepoint_2  Tumor_plus_IFNg_timepoint_2     Tumor_plus_PrfKO_NK_timepoint_2  Tumor_only_timepoint_2
+
+```{r 04 overlapping, message=FALSE, eval=TRUE, include=TRUE}
+save_dir <- "~/workspace/results_dir/EXP9.8_publication/"
+dir.create(save_dir)
+
+condition_tp_subset <- c("Tumor_plus_WT_NK_timepoint_2",  
+                         "Tumor_plus_IFNg_timepoint_2", 
+                         "Tumor_plus_PrfKO_NK_timepoint_2", 
+                         "Tumor_only_timepoint_2")
+
+dds_subset <- dds_filt[ , (dds_filt$condition_tp %in% condition_tp_subset) & (dds_filt$experiment %in% experiment_subset)]  
+
+# Dropping levels
+dds_subset$condition_tp <- droplevels(dds_subset$condition_tp)
+table(dds_subset$condition_tp)
+dds_subset$experiment <- droplevels(dds_subset$experiment)
+table(dds_subset$experiment)
+dds_subset$experiment <- droplevels(dds_subset$experiment)
+dds_subset$cell_line_label <- droplevels(dds_subset$cell_line_label)
+
+# filtering lowly expressed genes
+dds_subset_filt <- filterDatasets(dds_subset, 
+                                  abs_filt = TRUE, 
+                                  abs_filt_samples = abs_filt_samples) # at least in N samples, which is a smallest group size
+
+design(dds_subset_filt) <- deg_design
+dds_subset_filt <- DESeq2::estimateSizeFactors(dds_subset_filt)
+dds_subset_filt <- DESeq2::DESeq(dds_subset_filt) # do not replace outliers based on replicates
+log2_norm_subset_filt <- DESeq2::normTransform(dds_subset_filt)
+vsd_subset_filt <- DESeq2::vst(dds_subset_filt, blind = FALSE) # using blind=FALSE utilize design info;
+rm(key_metadata_subset, key_variables_tableOne) # in case this exists from previous runs
+key_metadata_subset <- as.data.frame(colData(dds_subset)) %>%
+  dplyr::select(experiment, condition_tp, cell_line_label, technical_replicate) 
+
+key_variables_tableOne <- tableone::CreateTableOne(vars = colnames(dplyr::select(key_metadata_subset, -condition_tp)), 
+                                                   strata = c("condition_tp"), 
+                                                   data = key_metadata_subset)
+
+tableone::kableone(key_variables_tableOne$CatTable,
+                   caption = "Overview of number of samples in different categories (experiment, condition,...).") %>%
+  kableExtra::kable_material(c("striped", "hover"))
+
+transf_object <- vsd_subset_filt
+
+#Before removing Batch Effect
+pca_deg_plotCellLabel <- generatePCA(transf_object = transf_object[,transf_object$cell_line_label == "A"], 
+                                     cond_interest_varPart = c("condition_tp", "cell_line_label", "experiment"), 
+                                     color_variable = "condition_tp", 
+                                     shape_variable = "cell_line_label",
+                                     ntop_genes = 1000) +
+  ggtitle(paste( "PCA plot. EXP9.8 Cell line A")) +
+  scale_color_manual(values = c("#DD3344" ,"#553388", "#A3E7FC", "#26C485"))
+plot(pca_deg_plotCellLabel)
+ggsave(filename = file.path(save_dir, "PCA_Plot_all_conditions_A.png"), pca_deg_plotCellLabel,
+                            width = 20, height = 14, units = "cm")
+
+pca_deg_plotCellLabel <- generatePCA(transf_object = transf_object[,transf_object$cell_line_label == "D"], 
+                                     cond_interest_varPart = c("condition_tp", "cell_line_label", "experiment"), 
+                                     color_variable = "condition_tp", 
+                                     shape_variable = "cell_line_label",
+                                     ntop_genes = 1000) +
+  ggtitle(paste( "PCA plot. EXP9.8 Cell line D")) +
+  scale_color_manual(values = c("#DD3344" ,"#553388", "#A3E7FC", "#26C485"))+
+  scale_shape_manual(values = 17)
+plot(pca_deg_plotCellLabel)
+ggsave(filename = file.path(save_dir, "PCA_Plot_all_conditions_D.png"), pca_deg_plotCellLabel,
+                            width = 20, height = 14, units = "cm")
+
+# Remove batch effect (only for the cell_line_label)
+transf_batch_NObatch_cell_label <- vsd_subset_filt
+transf_batch_NObatch_cell_label_count <- limma::removeBatchEffect(SummarizedExperiment::assay(transf_batch_NObatch_cell_label), 
+                                                                  transf_batch_NObatch_cell_label$cell_line_label)
+SummarizedExperiment::assay(transf_batch_NObatch_cell_label) <- transf_batch_NObatch_cell_label_count
+
+pca_deg_NObatch_cell_label <- generatePCA(transf_object = transf_batch_NObatch_cell_label, 
+                                          cond_interest_varPart = c("condition_tp", "cell_line_label"), 
+                                          color_variable = "condition_tp", 
+                                          shape_variable = "cell_line_label",
+                                          ntop_genes = 1000) +
+  scale_color_manual(values = c("#DD3344" ,"#553388", "#A3E7FC", "#26C485"))+
+  ggtitle(paste( "PCA plot. EXP9.8 Batch corrected for cell_line"))
+plot(pca_deg_NObatch_cell_label)
+ggsave(filename = file.path(save_dir, "PCA_Plot_all_conditions_batch_corrected_cell_lines.png"), pca_deg_NObatch_cell_label,
+                            width = 20, height = 14, units = "cm")
+
+
+##### Venn diagramms
+
+Deg1_filename <-  paste0("~/workspace/results_dir/nk_tum_immunoedit_complete/deg_1Tumor_plus_WT_NK_timepoint_2Tumor_only_timepoint_2/degTumor_plus_WT_NK_timepoint_2_vs_Tumor_only_timepoint_2_results.xlsx")
+Deg2_filename <-  paste0("~/workspace/results_dir/nk_tum_immunoedit_complete/deg_2Tumor_plus_IFNg_timepoint_2Tumor_only_timepoint_2/degTumor_plus_IFNg_timepoint_2_vs_Tumor_only_timepoint_2_results.xlsx")
+Deg3_filename <-  paste0("~/workspace/results_dir/nk_tum_immunoedit_complete/deg_3Tumor_plus_PrfKO_NK_timepoint_2Tumor_only_timepoint_2/degTumor_plus_PrfKO_NK_timepoint_2_vs_Tumor_only_timepoint_2_results.xlsx")
+
+
+
+Deg1 <- openxlsx::read.xlsx(Deg1_filename,sheet = 'results_signif')
+Deg1_pos <- Deg1[Deg1$log2FoldChange > 0, c('mgi_symbol')  ]
+Deg1_neg <- Deg1[Deg1$log2FoldChange < 0, c('mgi_symbol')  ]
+
+Deg2 <- openxlsx::read.xlsx(Deg2_filename,sheet = 'results_signif')
+Deg2_pos <- Deg2[Deg2$log2FoldChange > 0, c('mgi_symbol')  ]
+Deg2_neg <- Deg2[Deg2$log2FoldChange < 0, c('mgi_symbol')  ]
+Deg2_neg <- Deg2_neg[Deg2_neg!=""]
+
+Deg3 <- openxlsx::read.xlsx(Deg3_filename,sheet = 'results_signif')
+Deg3_pos <- Deg3[Deg3$log2FoldChange > 0, c('mgi_symbol')  ]
+Deg3_neg <- Deg3[Deg3$log2FoldChange < 0, c('mgi_symbol')  ]
+Deg3_neg <- Deg3_neg[Deg3_neg!=""]
+
+Deg_list_pos <-  list("Tmr+WT_NK TP2 vs T only TP2" = Deg1_pos,
+                  "Tmr+IFNg TP2 vs T only TP2" = Deg2_pos, 
+                  "Tmr+PrfKO NK TP2 vs T only TP2" = Deg3_pos)
+
+Deg_list_neg <-  list("Tmr+WT_NK TP2 vs T only TP2" = Deg1_neg,
+                      "Tmr+IFNg TP2 vs T only TP2" = Deg2_neg, 
+                      "Tmr+PrfKO NK TP2 vs T only TP2" = Deg3_neg)
+library(ggvenn)
+
+ven_diag <- ggvenn(Deg_list_pos,fill_color = c("#553388", "#A3E7FC", "#26C485"))
+ven_diag
+ggsave(filename = file.path(save_dir, "venn_diag_positive_up_reg.png"), ven_diag,
+       width = 20, height = 20, units = "cm")
+
+ven_diag <- ggvenn(Deg_list_neg,fill_color = c("#553388", "#A3E7FC", "#26C485"))
+ven_diag
+ggsave(filename = file.path(save_dir, "venn_diag_positive_down_reg.png"), ven_diag,
+       width = 20, height = 20, units = "cm")
+
+
+Deg12_intersect_pos <- intersect(Deg1_pos, Deg2_pos)
+Deg123_intersect_pos <- intersect(Deg12_intersect_pos, Deg3_pos)
+Deg23_intersect_pos <- intersect(Deg2_pos, Deg3_pos)
+Deg31_intersect_pos <- intersect(Deg3_pos, Deg1_pos)
+
+Deg12_intersect_pos_scecif <- setdiff(Deg12_intersect_pos, Deg123_intersect_pos)
+Deg23_intersect_pos_specif <- setdiff(Deg23_intersect_pos, Deg123_intersect_pos)
+Deg31_intersect_pos_specif <- setdiff(Deg31_intersect_pos, Deg123_intersect_pos)
+
+setdiff(Deg1_pos, c(Deg2_pos, Deg3_pos))
+setdiff(Deg2_pos, c(Deg1_pos, Deg3_pos))
+setdiff(Deg3_pos, c(Deg1_pos, Deg2_pos))
+
+Deg12_intersect_neg <- intersect(Deg1_neg, Deg2_neg)
+Deg123_intersect_neg <- intersect(Deg12_intersect_neg, Deg3_neg)
+Deg23_intersect_neg <- intersect(Deg2_neg, Deg3_neg)
+Deg31_intersect_neg <- intersect(Deg3_neg, Deg1_neg)
+
+
+Deg12_intersect_neg_scecif <- setdiff(Deg12_intersect_neg, Deg123_intersect_neg)
+Deg23_intersect_neg_specif <- setdiff(Deg23_intersect_neg, Deg123_intersect_neg)
+Deg31_intersect_neg_specif <- setdiff(Deg31_intersect_neg, Deg123_intersect_neg)
+
+setdiff(Deg1_neg, c(Deg2_neg, Deg3_neg))
+setdiff(Deg2_neg, c(Deg1_neg, Deg3_neg))
+setdiff(Deg3_neg, c(Deg1_neg, Deg2_neg))
+
+
+cid <- 0
+###### volcano plots for the publication ######
+```

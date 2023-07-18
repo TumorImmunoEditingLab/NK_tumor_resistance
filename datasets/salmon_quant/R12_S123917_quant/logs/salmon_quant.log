@@ -1,0 +1,52 @@
+[2022-11-16 14:51:37.549] [jointLog] [info] setting maxHashResizeThreads to 6
+[2022-11-16 14:51:37.549] [jointLog] [info] Fragment incompatibility prior below threshold.  Incompatible fragments will be ignored.
+[2022-11-16 14:51:37.549] [jointLog] [info] Usage of --validateMappings implies use of minScoreFraction. Since not explicitly specified, it is being set to 0.65
+[2022-11-16 14:51:37.549] [jointLog] [info] Setting consensusSlack to selective-alignment default of 0.35.
+[2022-11-16 14:51:37.549] [jointLog] [info] parsing read library format
+[2022-11-16 14:51:37.549] [jointLog] [info] There is 1 library.
+[2022-11-16 14:51:37.757] [jointLog] [info] Loading pufferfish index
+[2022-11-16 14:51:37.820] [jointLog] [info] Loading dense pufferfish index.
+[2022-11-16 14:54:57.255] [jointLog] [info] done
+[2022-11-16 14:54:57.345] [jointLog] [info] Index contained 138045 targets
+[2022-11-16 14:54:57.390] [jointLog] [info] Number of decoys : 66
+[2022-11-16 14:54:57.390] [jointLog] [info] First decoy index : 137940 
+[2022-11-16 14:57:03.541] [jointLog] [info] Thread saw mini-batch with a maximum of 0.84% zero probability fragments
+[2022-11-16 14:57:03.604] [jointLog] [info] Thread saw mini-batch with a maximum of 0.60% zero probability fragments
+[2022-11-16 14:57:03.712] [jointLog] [info] Thread saw mini-batch with a maximum of 0.68% zero probability fragments
+[2022-11-16 14:57:03.779] [jointLog] [info] Thread saw mini-batch with a maximum of 0.62% zero probability fragments
+[2022-11-16 14:57:03.805] [jointLog] [info] Thread saw mini-batch with a maximum of 0.64% zero probability fragments
+[2022-11-16 14:57:03.810] [jointLog] [info] Thread saw mini-batch with a maximum of 0.64% zero probability fragments
+[2022-11-16 14:57:03.874] [jointLog] [info] Computed 60322 rich equivalence classes for further processing
+[2022-11-16 14:57:03.874] [jointLog] [info] Counted 8984339 total reads in the equivalence classes 
+[2022-11-16 14:57:03.880] [jointLog] [warning] 1.02553% of fragments were shorter than the k used to build the index.
+If this fraction is too large, consider re-building the index with a smaller k.
+The minimum read size found was 20.
+
+
+[2022-11-16 14:57:03.880] [jointLog] [info] Number of mappings discarded because of alignment score : 5928374
+[2022-11-16 14:57:03.880] [jointLog] [info] Number of fragments entirely discarded because of alignment score : 848543
+[2022-11-16 14:57:03.880] [jointLog] [info] Number of fragments discarded because they are best-mapped to decoys : 800621
+[2022-11-16 14:57:03.880] [jointLog] [info] Number of fragments discarded because they have only dovetail (discordant) mappings to valid targets : 0
+[2022-11-16 14:57:03.880] [jointLog] [info] Mapping rate = 84.0514%
+
+[2022-11-16 14:57:03.880] [jointLog] [info] finished quantifyLibrary()
+[2022-11-16 14:57:03.888] [jointLog] [info] Starting optimizer
+[2022-11-16 14:57:03.935] [jointLog] [info] Marked 0 weighted equivalence classes as degenerate
+[2022-11-16 14:57:03.942] [jointLog] [info] iteration = 0 | max rel diff. = 5241.97
+[2022-11-16 14:57:03.875] [fileLog] [info] 
+At end of round 0
+==================
+Observed 10689107 total fragments (10689107 in most recent round)
+
+[2022-11-16 14:57:04.467] [jointLog] [info] iteration = 100 | max rel diff. = 14.5292
+[2022-11-16 14:57:05.003] [jointLog] [info] iteration = 200 | max rel diff. = 15.3524
+[2022-11-16 14:57:05.545] [jointLog] [info] iteration = 300 | max rel diff. = 2.49863
+[2022-11-16 14:57:06.085] [jointLog] [info] iteration = 400 | max rel diff. = 19.1156
+[2022-11-16 14:57:06.643] [jointLog] [info] iteration = 500 | max rel diff. = 0.0784723
+[2022-11-16 14:57:07.180] [jointLog] [info] iteration = 600 | max rel diff. = 0.229778
+[2022-11-16 14:57:07.713] [jointLog] [info] iteration = 700 | max rel diff. = 0.0464198
+[2022-11-16 14:57:08.264] [jointLog] [info] iteration = 800 | max rel diff. = 0.0235646
+[2022-11-16 14:57:08.717] [jointLog] [info] iteration = 882 | max rel diff. = 0.00855776
+[2022-11-16 14:57:08.723] [jointLog] [info] Finished optimizer
+[2022-11-16 14:57:08.723] [jointLog] [info] writing output 
+

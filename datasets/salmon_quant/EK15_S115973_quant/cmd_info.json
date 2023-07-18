@@ -1,0 +1,10 @@
+{
+    "salmon_version": "1.8.0",
+    "threads": "6",
+    "index": "/home/peter_r/bioinf_isilon/core_bioinformatics_unit/Internal/references/Mus_musculus_GRCm38_v102/salmon_index",
+    "libType": "SF",
+    "validateMappings": [],
+    "unmatedReads": "data_processed/fastq_bbduk_trimmed/EK15_S115973_bbduk_trimmed.fastq.gz",
+    "output": "data_processed/salmon_quant/EK15_S115973_quant",
+    "auxDir": "aux_info"
+}
