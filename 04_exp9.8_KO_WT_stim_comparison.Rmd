@@ -7,7 +7,7 @@ import::from(.from = parallel, makeCluster, stopCluster)
 # import utils scripts
 import::from(.from = here::here("utils/filterDatasets.R"), "filterDatasets", .character_only=TRUE) # used for filtering
 import::from(.from = here::here("utils/rnaSelectTopVarGenes.R"), "rnaSelectTopVarGenes", .character_only=TRUE)
-import::from(.from = here::here("utils/edaFunctions.R"), "varPartitionEstimate", "generatePCA", "pcaExtractVariance", "pcaPlotVariance", "pcaCorrPCs", "pcaCorrPCsPlot", .character_only=TRUE)
+import::from(.from = here::here("utils/edaFunctions.R"), "varPartitionEstimate", "generatePCA", "pcaExtractVariance", "pcaPlotVariance", "pcaCorrPCs", "pcaCorrPCsPlot", "generatePCA_plus_shape", .character_only=TRUE)
 import::from(.from = here::here("utils/generateResults.R"), "generateResults_upd", .character_only=TRUE) # 
 import::from(.from = here::here("utils/plotDegResults.R"), "plotVolcano","plotVolcano_repel", .character_only=TRUE)
 import::from(.from = here::here("utils/generateEnsemblAnnotation.R"), "generateEnsemblAnnotation", .character_only=TRUE) # used for filtering
@@ -150,6 +150,33 @@ genes_of_interest_exp9.4_9.7 <- list('Ifi44'     ="ENSMUSG00000028037",
                                      'Tgm2'      ="ENSMUSG00000037820",
                                      'Adprhl1'   ="ENSMUSG00000031448")
 
+
+
+transf_batch_NObatch_cell_label <- vsd_filt[ , (vsd_filt$condition_tp %in% unique(unlist(list_of_comparisons))) & (vsd_filt$experiment %in% experiment_subset)]  
+transf_batch_NObatch_cell_label$cell_line_label <- droplevels(transf_batch_NObatch_cell_label$cell_line_label)
+
+transf_batch_NObatch_cell_label_count <- limma::removeBatchEffect(SummarizedExperiment::assay(transf_batch_NObatch_cell_label), 
+                                                                    transf_batch_NObatch_cell_label$cell_line_label)
+SummarizedExperiment::assay(transf_batch_NObatch_cell_label) <- transf_batch_NObatch_cell_label_count
+  
+pca_deg_NObatch_cell_label <- generatePCA(transf_object = transf_batch_NObatch_cell_label, 
+                                            cond_interest_varPart = c("condition_tp", "cell_line_label"), 
+                                            color_variable = "condition_tp", 
+                                            shape_variable = "cell_line_label",
+                                            ntop_genes = 1000) +
+                            ggtitle("Exp 9.8 Removed batchEffect - cell_line")
+pca_deg_NObatch_cell_label
+
+ggsave(filename = file.path(output_dir, "Exp 9.8 batchEffect corrected.png"), 
+         plot=pca_deg_NObatch_cell_label,
+         width = 20, height = 14, units = "cm")
+
+ggsave(filename = file.path(output_dir, "Exp 9.8 batchEffect corrected.eps"), 
+         plot=pca_deg_NObatch_cell_label,
+         width = 20, height = 14, units = "cm")
+
+
+
 ```
 
 ```{r The main analysis part, message=FALSE, eval=TRUE, include=TRUE}
@@ -265,9 +292,12 @@ for (comparison_i in list_of_comparisons){
                                                            common.legend = TRUE)
   
   ggsave(filename = paste0(deg_dir, comparison_i[1], "_VS_",comparison_i[2], "batch_correction.png"), 
-         plot=PCA_batch_highlightCellLines_merged,
-         width = 40, height = 20, units = "cm")
-
+         plot=pca_deg_NObatch_cell_label,
+         width = 20, height = 20, units = "cm")
+  
+  ggsave(filename = paste0(deg_dir, comparison_i[1], "_VS_",comparison_i[2], "batch_correction.eps"), 
+         plot=pca_deg_NObatch_cell_label,
+         width = 20, height = 20, units = "cm")
   
   #Generate results
   deg_comparison_results <- generateResults_upd(dds_object = dds_subset_filt,
@@ -370,6 +400,7 @@ for (comparison_i in list_of_comparisons){
                                        annotation_colors = ann_colors,
                                        #annotation_row = row_annot_symbols,
                                        show_colnames = FALSE,
+                                       border_color = NA,
                                        show_rownames = FALSE,
                                        cluster_cols = FALSE,
                                        #cluster_rows = counts_deg_ord_row_cor_hclust,
@@ -390,6 +421,7 @@ for (comparison_i in list_of_comparisons){
                                        scale = "row",
                                        annotation_col = annotation_col,
                                        annotation_colors = ann_colors,
+                                       border_color = NA,
                                        #annotation_row = row_annot_symbols,
                                        show_colnames = FALSE,
                                        show_rownames = FALSE,
