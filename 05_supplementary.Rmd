@@ -1,0 +1,167 @@
+```{r}
+#BiocManager::install("TCGAbiolinks")
+#BiocManager::install("EDASeq")
+#BiocManager::install("DESeq2")
+
+library(TCGAbiolinks)
+library(survminer)
+library(dplyr)
+library(DESeq2)
+library(survival)
+
+```
+```{r}
+# Load the data - create the query
+
+# query <- GDCquery(
+#     project = "TARGET-ALL-P3",
+#     data.category = c("Transcriptome Profiling"),
+#     data.type = "Gene Expression Quantification", 
+#     workflow.type = "STAR - Counts")
+# # load the data
+# #GDCdownload(query = query)
+# # create the S4 object and save rda
+# expdat <- GDCprepare(
+#     query = query,
+#     save = TRUE, 
+#     save.filename = "~/workspace/GDCdata/TARGET-ALL-P3.rda")
+#
+#clin_gbm <- GDCquery_clinic("TARGET-ALL-P3", "clinical")
+
+
+query <- GDCquery(
+    project = "TARGET-ALL-P2",
+    data.category = c("Transcriptome Profiling"),
+    data.type = "Gene Expression Quantification", 
+    workflow.type = "STAR - Counts")
+
+# load the data
+GDCdownload(query = query)
+
+# create the S4 object and save rda
+expdat <- GDCprepare(
+    query = query,
+    save = TRUE, 
+    save.filename = "~/workspace/GDCdata/TARGET-ALL-P2.rda")
+
+# load clinical data
+clin_gbm <- GDCquery_clinic("TARGET-ALL-P2", "clinical")
+
+# clin_gbm_filt <- data.frame(vital_status = expdat@colData@listData[["vital_status"]],
+#                        days_to_death = expdat@colData@listData[["days_to_death"]],
+#                        submitter_id = expdat@colData@listData[["submitter_id"]],
+#                        days_to_last_follow_up = expdat@colData@listData[["days_to_last_follow_up"]])
+
+# find what ids overlaps in exp. dataset and clinic dataset 
+# and filter the data
+submitter_ids_intersect <- intersect(expdat$submitter_id, clin_gbm$submitter_id)
+expdat_filt <- expdat[, expdat$submitter_id %in% submitter_ids_intersect]
+clin_gbm_filt <- clin_gbm[clin_gbm$submitter_id %in% submitter_ids_intersect, ]
+
+#convert the expr. data into dds object and perform variance stabilisation
+dds <- DESeqDataSet(expdat_filt, design = ~1)
+dds <- DESeq(dds)
+PLAAT3_expr_vst <- vst(dds)["ENSG00000176485.12"]@assays@data@listData[[1]]
+
+# to identify potential outliers - use median Z score (Median Absolute Deviation). And all values that were deviated > 1.5 Z from the median.
+MAD <- median(abs(PLAAT3_expr_vst - median(PLAAT3_expr_vst)))
+mdf_z_scr <- 0.6745*(PLAAT3_expr_vst - median(PLAAT3_expr_vst))/MAD
+
+# stratify patients by the modified Z score.
+High_PLAAT3_expr_ids_mzs <- expdat_filt[,as.vector(mdf_z_scr > 1.5 )]@colData@listData[["patient"]]
+clin_gbm_filt$PLAAT3 <- "Low"
+clin_gbm_filt[clin_gbm_filt$submitter_id %in% High_PLAAT3_expr_ids_mzs ,"PLAAT3"] <- "High"
+clin_gbm_filt <- clin_gbm_filt[clin_gbm_filt$vital_status %in% c("Alive", "Dead"),]
+
+TCGAanalyze_survival(
+    data = clin_gbm_filt,
+    clusterCol = "PLAAT3",
+    main = "TARGET ALL-P2 Low/High PLAAT3",
+    height = 10,
+    width=10
+)
+
+##############
+
+
+PLAAT3_expr <- PLAAT3_expr_vst
+quantiles_0.4_0.6 <- c(quantile(PLAAT3_expr, 0.4), quantile(PLAAT3_expr, 0.6))
+
+median_PLAAT3_expr <- median(SummarizedExperiment::assay(expdat_filt[expdat_filt@rowRanges@elementMetadata@listData[["gene_name"]] == "PLAAT3",]))
+
+
+Low_PLAAT3_expr <- PLAAT3_expr <= quantiles_0.4_0.6[1]
+#Low_PLAAT3_expr <- PLAAT3_expr <= median(PLAAT3_expr)
+#Low_PLAAT3_expr <- PLAAT3_expr <= adj_PLAAT3_mean
+Low_PLAAT3_expr_ids <- expdat_filt[,as.vector(Low_PLAAT3_expr)]@colData@listData[["patient"]]
+
+High_PLAAT3_expr <- PLAAT3_expr >= quantiles_0.4_0.6[2]
+#High_PLAAT3_expr <- PLAAT3_expr > median(PLAAT3_expr)
+#High_PLAAT3_expr <- PLAAT3_expr > adj_PLAAT3_mean
+High_PLAAT3_expr_ids <- expdat_filt[,as.vector(High_PLAAT3_expr)]@colData@listData[["patient"]]
+
+
+
+clin_gbm_filt$PLAAT3 <- "Other"
+clin_gbm_filt[clin_gbm_filt$submitter_id %in% Low_PLAAT3_expr_ids,]$PLAAT3 <- "Low"
+clin_gbm_filt[clin_gbm_filt$submitter_id %in% High_PLAAT3_expr_ids,]$PLAAT3 <- "High"
+
+clin_gbm_filt <- clin_gbm_filt[clin_gbm_filt$PLAAT3 != "Other",]
+
+TCGAanalyze_survival(
+    data = clin_gbm_filt,
+    clusterCol = "PLAAT3",
+    main = "TARGET ALL-P2 Low/High PLAAT3",
+    height = 10,
+    width=10
+)
+
+
+
+df <- clin_gbm_filt[,c("vital_status", "days_to_death", "PLAAT3")]
+df <- df%>% filter(vital_status != "Unknown" & vital_status != "Not Reported")
+df <- df %>% mutate(vital_status_bool = dplyr::case_when(vital_status == "Dead" ~ 1,
+                                                         vital_status == "Alive" ~ 0))
+
+cfit <- coxph(Surv(days_to_death, vital_status_bool) ~ PLAAT3, data=df, na.action = na.omit)
+
+with(df, Surv(days_to_death, vital_status_bool))
+
+km_fit <- survival::survfit(survival::Surv(days_to_death, vital_status_bool) ~ PLAAT3, data=df, na.action = na.omit, stype = 2)
+
+ggsurvplot(km_fit, data = df, pval = T, conf.int = T, cumevents = F)
+
+
+df <- data.frame(sample_id = clin_gbm_filt$submitter_id,
+                 death_day = clin_gbm_filt$days_to_death,
+                 last_followup_day = as.integer(clin_gbm_filt$days_to_last_follow_up),
+                 tpm = clin_gbm_filt$PLAAT3)
+
+annot_df <- df %>%
+  dplyr::mutate(vital_status = if_else(is.na(death_day), 0 , 1)) %>%
+  dplyr::mutate(time = if_else(
+    !is.na(death_day),
+    death_day ,
+    last_followup_day 
+  )) %>%
+  dplyr::filter(!(is.na(vital_status) | is.na(time))) %>%
+  dplyr::filter(time >= 0) %>%
+  dplyr::mutate(death_event = vital_status)
+
+km_fit <- survfit(Surv(time, death_event) ~ tpm, data = annot_df)
+
+ggsurvplot(
+  km_fit,
+  data = annot_df,
+  pval = T,
+  conf.int = T,
+  pval.method = T,
+  xlim = c(0, 365.25 * 2), # present narrower X axis, but not affect survival estimates.
+  xlab = "Time in days",
+  break.x.by = 60,
+  title=paste0("Kaplan-Meier plot for group"),
+  palette = c("#F18507","#3C77B5"),
+  ggtheme = theme_light())
+
+
+```
