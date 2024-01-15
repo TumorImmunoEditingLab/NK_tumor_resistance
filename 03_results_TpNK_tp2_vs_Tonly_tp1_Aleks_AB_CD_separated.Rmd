@@ -20,7 +20,8 @@ import::from(.from = tximport, tximport)
 
 import::from(.from = here::here("utils/filterDatasets.R"), "filterDatasets", .character_only=TRUE) # used for filtering
 import::from(.from = here::here("utils/generateEnsemblAnnotation.R"), "generateEnsemblAnnotation", .character_only=TRUE) # used for filtering
- 
+import::from(.from = here::here("utils/generateResults.R"), "meanExprsPerGroup", "generateResults_upd", .character_only=TRUE) # used for filtering
+
 ```
 
 ```{r 03 experiment information, message=FALSE, eval=TRUE, include=TRUE}
@@ -545,7 +546,7 @@ write.table(sampleData.tsv, file = "~/workspace/sampleData.tsv",
 
 ```{r 03 AB DE main - key variables table, message=FALSE, eval=TRUE, include=TRUE}
 #print(key_variables_tableOne$CatTable)
-rm(key_metadata_subset, key_variables_tableOne) # in case this exists from previus runs
+rm(key_metadata_subset, key_variables_tableOne) # in case this exists from previous runs
 key_metadata_subset <- as.data.frame(colData(dds_subset)) %>%
   dplyr::select(experiment, condition_tp, cell_line_label, technical_replicate) 
 

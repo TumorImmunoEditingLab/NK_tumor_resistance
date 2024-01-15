@@ -1,10 +1,10 @@
 #!/bin/bash
  
 # Description: bash script to start docker Rstudio server
-#    Rstudio docker image: ccribioinf/dockrstudio:4.0.3-v1
-#    docker image is based on tidyverse: rocker/tidyverse:4.0.3
+#    Rstudio docker image: ccribioinf/dockrstudio:4.2.0-v1
+#    docker image is based on tidyverse: rocker/tidyverse:4.2.0-v1
 #
-# Usage: bash dockRstudio_v4.0.3_run.sh
+# Usage: bash dockRstudio_v4.2.0-v1_run.sh
 #
 # Parameters:
 #    new_port (-p ${new_port}:8787) Map TCP port 8787 (default for Rstudio server) in the container to port $new_port on the Docker host.
