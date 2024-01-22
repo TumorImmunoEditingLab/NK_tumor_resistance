@@ -1,3 +1,23 @@
+import::from(.from = readr, read_csv, cols)
+import::from(magrittr, "%>%")
+import::from(dplyr, mutate, select, filter, rename, arrange, desc, group_by, summarise, pull, ungroup)  # dplyr_mutate = mutate
+import::from(purrr, map)
+import::from(future, plan, multisession, sequential)
+import::from(furrr, furrr_options, future_map2)
+import::from(ggplot2, .all=TRUE) # importing all as there is too many
+import::from(grid, gpar) # needed in complexheatmap
+import::from(kableExtra, kable_styling, kbl)
+
+import::from(.from = GenomicFeatures, makeTxDbFromGFF)
+import::from(.from = AnnotationDbi, annot_db_keys = keys, annot_db_select = select)
+import::from(.from = DESeq2, .all=TRUE)
+import::from(.from = tximport, tximport)
+
+import::from(.from = here::here("utils/filterDatasets.R"), "filterDatasets", .character_only=TRUE) # used for filtering
+import::from(.from = here::here("utils/generateEnsemblAnnotation.R"), "generateEnsemblAnnotation", .character_only=TRUE) # used for filtering
+import::from(.from = here::here("utils/generateResults.R"), "meanExprsPerGroup", "generateResults_upd", .character_only=TRUE) # used for filtering
+
+
 # load DE tables from scRNA-seq work.
 # Downloaded from here:
 
@@ -52,8 +72,11 @@ dds_subset <- dds_filt[ , dds_filt$condition_tp %in% condition_tp_subset]
 dds_subset <- dds_subset[ , dds_subset$experiment %in% experiment_subset]
 
 # select one of these:
-dds_subset <- dds_subset[ , dds_subset$cell_line_label %in% c("A", "B")]
-#dds_subset <- dds_subset[ , dds_subset$cell_line_label %in% c("C", "D")]
+
+
+dds_subset <- dds_subset ; out_folder <- Homologies_overlap_ABCD
+#dds_subset <- dds_subset[ , dds_subset$cell_line_label %in% c("A", "B")] ; out_folder <- Homologies_overlap_AB
+#dds_subset <- dds_subset[ , dds_subset$cell_line_label %in% c("C", "D")] ; out_folder <- Homologies_overlap_CD
 
 # fixing Tumor_plus_WT_NK_timepoint_2 -> Tumor_plus_NK_timepoint_2
 dds_subset$condition_tp <- droplevels(dds_subset$condition_tp)
@@ -135,7 +158,7 @@ df_tmp <- data.frame("Mouse_" = deg_TpNK_tp2_vs_Tonly_tp1_results$results_signif
                        select(avg_log2FC, p_adj, gene)
 )
 write.table(df_tmp, 
-            file = "~/workspace/results/Homologies_overlap_AB/E697.tsv",
+            file = paste("~/workspace/results/", out_folder, "/E697.tsv"),
             sep = "\t",append = F, row.names = F, col.names = T, quote = F)
 a1 <- length(intersect_E697)
 a2 <- length(unique(deg_TpNK_tp2_vs_Tonly_tp1_results$results_signif$Hum_homlg_gene))-1 - a1 #we exclude NA/empty from counting
@@ -161,7 +184,7 @@ df_tmp <- data.frame("Mouse_" = deg_TpNK_tp2_vs_Tonly_tp1_results$results_signif
                        select(avg_log2FC, p_adj, gene)
 )
 write.table(df_tmp, 
-            file = "~/workspace/results/Homologies_overlap_AB/kasumi2.tsv",
+            file = paste("~/workspace/results/", out_folder, "/E697.tsv"),
             sep = "\t",append = F, row.names = F, col.names = T, quote = F)
 
 a1 <- length(intersect_kasumi2)
@@ -188,7 +211,7 @@ df_tmp <- data.frame("Mouse_" = deg_TpNK_tp2_vs_Tonly_tp1_results$results_signif
                        select(avg_log2FC, p_adj, gene)
 )
 write.table(df_tmp, 
-            file = "~/workspace/results/Homologies_overlap_AB/nalm6.tsv",
+            file = paste("~/workspace/results/", out_folder, "/E697.tsv"),
             sep = "\t",append = F, row.names = F, col.names = T, quote = F)
 
 a1 <- length(intersect_nalm6)
@@ -217,7 +240,7 @@ df_tmp <- data.frame("Mouse_" = deg_TpNK_tp2_vs_Tonly_tp1_results$results_signif
                        select(avg_log2FC, p_adj, gene)
 )
 write.table(df_tmp, 
-            file = "~/workspace/results/Homologies_overlap_AB/rchacv.tsv",
+            file = paste("~/workspace/results/", out_folder, "/E697.tsv"),
             sep = "\t",append = F, row.names = F, col.names = T, quote = F)
 
 a1 <- length(intersect_rchacv)
