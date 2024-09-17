@@ -1,0 +1,376 @@
+```{r "load libraries}
+#BiocManager::install("TCGAbiolinks")
+#BiocManager::install("EDASeq")
+#BiocManager::install("DESeq2")
+
+library(TCGAbiolinks)
+library(survminer)
+library(dplyr)
+library(DESeq2)
+library(survival)
+library(purrr)
+library(stringr)
+import::from(.from = here::here("utils/TCGA_utils.R"), "GDCprepare", "readClinical", "readGeneExpressionQuantification", "makeSEfromGeneExpressionQuantification", "colDataPrepareTARGET", "colDataPrepareBLGSP", "colDataPrepareOHSU", "colDataPrepare", "makeSEfromTranscriptomeProfilingSTAR", "makeSEfromTranscriptomeProfiling", "readTranscriptomeProfiling", "readGeneLevelCopyNumber", "makeSEfromGeneLevelCopyNumber", "readGISTIC", "readCopyNumberVariation", "addFFPE", "getFFPE", "getAliquot_ids", "getBarcodeInfo", "TCGAprepare_Affy", "splitAPICall", .character_only=TRUE) # used for filtering
+
+
+```
+
+```{r "TARGET-ALL-P2" }
+# Load the data - create the query for TARGET-ALL-P2 
+query <- GDCquery(
+    project = "TARGET-ALL-P2",
+    data.category = c("Transcriptome Profiling"),
+    data.type = "Gene Expression Quantification", 
+    workflow.type = "STAR - Counts")
+
+# load the data
+#GDCdownload(query = query)
+
+# create the S4 object and save rda
+expdat <- GDCprepare(
+    query = query,
+    save = TRUE, 
+    save.filename = "~/workspace/GDCdata/TARGET-ALL-P2.rda")
+
+# load clinical data
+clin_gbm <- GDCquery_clinic("TARGET-ALL-P2", "clinical")
+
+# clin_gbm_filt <- data.frame(vital_status = expdat@colData@listData[["vital_status"]],
+#                        days_to_death = expdat@colData@listData[["days_to_death"]],
+#                        submitter_id = expdat@colData@listData[["submitter_id"]],
+#                        days_to_last_follow_up = expdat@colData@listData[["days_to_last_follow_up"]])
+
+# find what ids overlaps in exp. dataset and clinic dataset 
+# and filter the data
+submitter_ids_intersect <- intersect(expdat$patient, clin_gbm$submitter_id)
+expdat_filt <- expdat[, expdat$patient %in% submitter_ids_intersect]
+clin_gbm_filt <- clin_gbm[clin_gbm$submitter_id %in% submitter_ids_intersect, ]
+
+#convert the expr. data into dds object and perform variance stabilisation
+dds <- DESeqDataSet(expdat_filt, design = ~1)
+#dds <- DESeq(dds)
+PLAAT3_expr_vst <- vst(dds)["ENSG00000176485.12"]@assays@data@listData[[1]]
+
+# to identify potential outliers - use median Z score (Median Absolute Deviation). And all values that were deviated > 1.5 Z from the median.
+MAD <- median(abs(PLAAT3_expr_vst - median(PLAAT3_expr_vst)))
+mdf_z_scr <- 0.6745*(PLAAT3_expr_vst - median(PLAAT3_expr_vst))/MAD
+
+# stratify patients by the modified Z score.
+High_PLAAT3_expr_ids_mzs <- expdat_filt[,as.vector(mdf_z_scr > 1.5 )]@colData@listData[["patient"]]
+clin_gbm_filt$PLAAT3 <- "Low"
+clin_gbm_filt[clin_gbm_filt$submitter_id %in% High_PLAAT3_expr_ids_mzs ,"PLAAT3"] <- "High"
+clin_gbm_filt <- clin_gbm_filt[clin_gbm_filt$vital_status %in% c("Alive", "Dead"),]
+
+TCGAanalyze_survival(
+    data = clin_gbm_filt,
+    clusterCol = "PLAAT3",
+    main = "TARGET ALL-P2 Low/High PLAAT3",
+    filename = "survival_TARGET-ALL-P2_Low_High_PLAAT3_1.5z.pdf",
+    risk.table = T,
+    conf.int = F,
+    height = 10,
+    width=10
+)
+
+```
+
+```{r "TARGET-ALL-P2 "}
+##############
+# Load the data - create the query AML
+query <- GDCquery(
+    project = "TARGET-AML",
+    data.category = c("Transcriptome Profiling"),
+    data.type = "Gene Expression Quantification",
+    workflow.type = "STAR - Counts")
+
+tmp <- query$results[[1]]
+tmp <- tmp[which(!duplicated(tmp$cases)),]
+query$results[[1]] <- tmp
+
+bad_samples_list <- c()
+
+# BLACK lIST - these entries have corrupted IDs (they are out of formatting)
+
+black_list <- c("1cce8ef9-2132-469a-9dd2-d7ba7ac2d392","dc2cf42c-3749-4fbc-b847-6aeaea0b4cac",
+                "19cf4d14-c96f-4963-98e9-19dffbb2d372","af8e679e-c1ef-4365-9377-8bec1cdb6050",
+                "5837b095-7226-478e-914e-0a63e8a474fa","5d89c7d8-bfa4-4e22-83b3-d9502eebc8bb",
+                "1e817541-47cd-4ce3-8812-5af947ceaedd","b1a1684f-2a30-455a-b65c-b3836acae833",
+                "236dda1b-5649-4824-8d32-6e411e84b590","a65bf2da-bcc2-488c-bba2-b955b9f5fe15",
+                "2d7fa837-74ff-4f66-840f-1121e3c1fc84","32a7be9a-75de-4286-82a2-74c79e01f733",
+                "fe7aea91-81f6-45d5-be51-ce5f1aa355b5","f0859c93-8d7f-404a-a58b-6a380153aff8",
+                "abb0a6b6-9c14-40e5-8ffa-81af4d73fc0a","3f2e13af-b20c-4113-81c8-1f719239716f",
+                "75a09478-e8db-4941-9ff0-9032121db459","b1154f54-8954-460f-be65-6c62756804b4",
+                "116fc74b-510d-4feb-baf4-f9b0a74894fd","8efacaab-8d61-4225-837b-c42a1e4c914f",
+                "a372f2c6-ef56-4861-8f56-71b494ba3c82","dddd0b69-d3e0-456b-953d-c1fd05ad9bc8",
+                "2910ce5f-cce4-47fc-9cd1-29460c645a31","bcce450e-53c9-401c-9e3c-15726aee6b74",
+                "3133ccaa-b4e4-48b3-8430-ea0f082c8a48","adf95118-0837-44a8-8b28-8626cbf227c7",
+                "836222f1-6067-4fc6-bba1-a587a67d7e89","a12d6fab-9113-4223-9290-f8d9ac7c8ae9",
+                "8e042700-bb72-4b94-90ca-6d67d48a96f0","b8f44d0a-6812-4a0a-b338-acd695283105",
+                "9ec79d96-3b36-4f45-9d1a-f5966b9a6352","8f9f21f9-419b-4366-a106-9391a58162d2",
+                "d014957c-bf98-4958-b890-413775a73cfa","bb3169af-8965-4b46-a3a4-14c7ee101f20",
+                "ea380475-03ab-4f91-84ec-8d93e7371e65","39499910-9b5d-4d5a-9433-9feab1603157",
+                "bfd657f8-16a8-419a-9329-ba4da1c075ab","bace435c-275a-411c-9ca3-4920b6970abb",
+                "3a4d2e18-f553-4e24-bbc1-7732d19c49b1","ba2aefd4-7716-4857-bcd4-cc64ee981c30",
+                "59ed7f0d-4697-4f76-aa7f-2193749fceaf","894b3ae0-af8c-427f-b831-d39b6ec051c3",
+                "d7b835a4-43db-4858-ac06-7b40f4de7436","776a4b95-1a90-4db4-b83d-3b7aa862b148",
+                "28fce5a1-a731-442c-a2a8-13d29c89e7ca","5991c0a7-375c-43c9-b85b-b936af5aa645",
+                "c5a4b24c-1c23-40f7-b13a-ad4f8a70a876","89b9d47c-7b30-43ff-bc05-2010b2f0436e",
+                "144ac8dd-9238-42a1-b4f0-5043770f2d27",
+                "9c74b223-0bc4-4420-a4bd-cfe22988c5b4","6f7bfe53-6000-4d35-944c-a6be40b64642",
+                "dabffad0-831a-40ae-afb5-804b9607f175","1e761c6f-2768-4aaa-afc3-9d08e583b239",
+                "ce32c34c-b200-48ec-b2e7-ddfc20ea9d09","e04cf779-6fab-45a0-be8c-646e9c2f29f8",
+                "d6cb2c7f-a27c-4a8e-8717-2d0aef8813d4","42fd6adc-1b02-429f-950a-9efe0b0d1695",
+                "c0203a07-2fc6-42bc-a051-7bc6d896b156","72fd418b-79ca-4183-8072-a4aba1d3ffc4",
+                "eb3a8090-e4d0-4a95-b1fa-122a220889a3","fccb5112-b630-42e5-80a6-661a6c48c66e",
+                "335a5c6b-d228-47c6-a076-e16babe020f9","40d78d55-4249-4238-91a9-f928a625f342",
+                "20eacea7-b494-4b73-9578-f98f92cf1a09","764f4696-4845-4f5c-8b8e-49ec2c76792f",
+                "2f0de586-517e-4e49-adb1-d3293ecb606b","9605582a-eebd-48f1-b035-85d07e2283fc",
+                "4fe07def-f108-43fd-b119-7f0537a801ce","7f914771-56e5-49e1-bf1a-31884de58829",
+                "46db18ef-e39b-4a22-ae88-d1d3d7e07d70", "f8186338-e939-477f-a140-b27769949253",
+                "a2c9c73f-832a-41fe-8ef2-b5b814f8eabb", "e22adaa4-03c1-4719-83c1-7f3d17e49f6e",
+                "2b65893d-7d87-4826-875d-8865d28c79fc", "852222c6-52f1-4530-8071-77300b8d25a2",
+                "7bcc4806-ec42-4d16-a5f8-108dd6f79d9d",
+                "f9f6ed14-b993-4b1c-8bd9-8a8e9cc6348f","830b9273-d289-417b-ae52-2a477dc59cca",
+                "13556ca2-7c66-47cd-bacd-7c63ec3f7e18","6da7c2bc-c47f-47db-9020-8f3bb753632f",
+                "f2ca7571-9112-4f2c-8591-7028671bc0b9","cb85de6f-132d-4846-b467-11e906cd2041",
+                "d5807d3b-3cec-4676-815e-d8f3b0a1b615","a5a831e1-df4b-44ba-a903-e8bcba06f0da",
+                "727f5e27-09e9-425f-9757-81da66c054bd","e2f6e032-e16f-44ca-839c-a3e1cace79b7",
+                "d9fdf6f2-3071-4b62-a3ec-b04071d13157","c6698c82-2293-48a9-8ba7-68295f027be6",
+                "21953a49-b4c2-4c0f-b9e8-b69b7a9dcfbe","91b9cfa6-3b37-4a78-ae84-d56c026e3698",
+                "a7dea07f-c24a-4b5c-a80f-f14222f4408d","19789ae0-eb4c-401b-81d5-6d13c38ca3c2",
+                "9e294ad8-264d-43a2-b9d2-02aa3307bf19","b1fa9c0a-3f92-4df7-ba73-775e3845c77a",
+                "3eb843d9-1a5a-47aa-a1f0-04dc6265f5b1","ef27cbfa-817d-42d1-a55b-f443334b5cb6",
+                "8cebd1b6-f0d6-4a3f-b402-a172f6d5c9e8","ef1631f9-826d-40c9-beff-aaa0c79191cd",
+                "916b4d0f-f9c3-4d19-b468-71ea6c738561","5f53e6f1-3e51-4f6b-a5af-df1e04f05e6f",
+                "d12e2a8f-702c-462a-b3b6-4f3fdb9d0368","eb79c252-1843-4ddd-9cad-46119922e4c3",
+                "3c1cdd30-f9cc-4068-9990-defeef13e961","ef015494-c6d6-408b-a1f3-9ab956e7354a",
+                "122af8f0-12d3-4dcd-9758-a0d8a6f30713","84486d8d-183f-40cd-8652-2dbc63743fc5",
+                "23dc3697-03da-4ede-a435-d6d4f33d6971",
+                "27e4394b-ad21-44b9-aded-f539bc7d385b","3ad6dfa7-734d-41b0-ad66-15f0cff630d0",
+                "faa87e86-4db0-43d2-9e84-9d9002cd5668","a847a390-cb2a-4ff8-8d52-847f23b0a8fa",
+                "ed4ddff8-2740-438f-9af1-2e8125a96239","8285d0a3-7455-4aaf-9a59-deb9da16be48",
+                "39ca8dd8-c721-43dc-ae3f-63ab895f73a1","4af2f63c-065a-4ddf-a232-fce87b21468c",
+                "5211856d-cae1-40f8-aa8e-281fca0cc74d","443bb9dd-d449-4591-beb4-b8bfb9f22346",
+                "8c170f00-5dea-4ff0-b65d-9545b5d2978c","df5f8115-ff60-40b0-8ba6-eaa61db9bbdf",
+                "7bbda645-1e29-4e72-be97-8eb60962e06c","bce4b21f-e461-48ec-bca6-1d05776eacf3",
+                "4abf867f-f25c-435c-8165-4417e4b32a5a","955c1e64-2817-4ab5-9719-b2a4d56fc40f",
+                "965fb832-1e42-4aec-905e-95800c24a81a","97267ed3-479f-4c8a-ba46-cbeb86f393bd",
+                "84283c7a-5e7f-40b3-9a84-2bab1c2f7149","0e2e1ebd-a9a9-4b83-8039-23bade3bffa3",
+                "e37d3fb1-73f0-48f1-ae40-e8800c17fc99","72332335-d7ac-4e15-971c-dd08d6d58a79",
+                "b03e9fb6-950f-4090-9f2e-1c45ca6d8afa","fde15027-bbcc-4877-bef7-a659f7bbd6ba",
+                "a89e9db8-3b32-44a7-a89d-d73cde32ad5e","0b243f09-a843-46a1-9b56-a5e3ca1cedc7",
+                "d57d71c1-73e7-410b-8ea7-25727df28bc3","4f2586ce-516b-45a5-a0ed-b8adc09c2bea",
+                "b3948fcd-4ff8-431f-8509-c12a16b5fbff","75c37bf7-5a24-450f-9bb9-331533673cf9",
+                "29b9063c-a697-4325-a727-a4a25f3f3773","9a0e80a7-e999-4c32-90f7-d9e603407f00",
+                "6c87b8c6-9ccb-4853-8502-ef2970c67040","8bead04f-b325-4bfd-958b-66e58c57a6ca",
+                "ac72ed95-381b-47b9-a64f-83feda6cb816","77a72b5e-6af3-4b43-8883-3fb420a2d3dc",
+                "2e2b7a9c-e1ea-4e5a-a028-60d5cc6c347f","010cc77d-6f6c-4372-93e9-ccc910a6462d",
+                "893975ee-3ed7-4d18-8e8b-ed3786975693","e40599a5-d4bb-4699-b999-30e63b2702aa",
+                "9eb7d521-f3de-4907-b10b-13a0d3b78656","176bae20-55cf-44e4-8417-57c7a7e71be3",
+                "f5bd72ae-919f-481c-8203-f878ee1c651a","6fd6a6b6-dea3-453a-90a6-92c2354628b6",
+                "a150fea5-8e2d-440a-95dd-1401ff21dd59","a5d7a298-59f1-40f0-8123-05959fa8063a",
+                "11fb7cce-06ad-445b-b09f-9dc1050e4cd4","e30ed1b7-15e9-4c2c-bfc5-c1a9c2a50a49",
+                "7987cc31-fc59-43c0-b2c1-9897fc15847b","9ef5bf69-5fec-4430-8bda-8f00925f1c67",
+                "5c579448-5b9d-428c-9105-e075a07446a9","9c1656ee-ab71-4002-ac32-75f922c40777",
+                "b105f825-06d2-4f24-82aa-03bb7b4dde14","88712125-67e5-4e47-a413-e55b522a641c",
+                "ebd2b092-16eb-450a-9167-3b8a81ad02d6","9dadf368-5c48-470b-bbd2-7cb381b69c47",
+                "4cd0a36e-27ae-49ed-bad7-4172aa4517da",
+                "9e8375c3-f911-495c-831d-78cc2405e22b","ff27b77a-2a64-4d88-8db0-c80bfb22c1ae",
+                "3752825d-20e1-4f44-aa3e-93c5088017f2","1284fcaa-0ba7-4108-ac20-e52f9ad970b4",
+                "a3b42528-3a10-4bc9-9616-8ad216be8ab6","2c2c38cc-80b5-4a14-bbc7-d6a158bc0be9",
+                "b0476c2c-89de-4ac7-88f1-28bbea729bfa","674e3c95-e630-4946-beda-41408cb199b1",
+                "e3efa84e-a672-43bc-a6ab-d054c7615747","bfc72f40-792e-41c4-9716-042e9f4ea984",
+                "855dcdd1-f683-4bf1-b6de-662b29ad1d93","b8ce1e48-7f1d-4e4f-879b-137e40edd9fc",
+                "058e0b03-f61c-41ea-9087-2a81b9925562","ecd78191-f7b5-492d-90e2-76223af1615b",
+                "d22c6d78-d7f4-48ed-8afd-32bf7d586db8","9f2f8ca2-811a-47ed-b78b-ff06034699e0",
+                "67239a38-d8cc-4c79-9e93-69b18b979671","dc21c55f-32c2-486e-89d7-70dbc96a3505",
+                "0c19f3db-170e-4b26-8dea-61f3133e242b","63414088-75b3-4c72-9549-02af0fad12a1",
+                "e1d686d9-7f3d-4e51-8bb4-30313a256826","daae4914-43a1-4bf4-8561-46d34c2dd86f",
+                "1982fa58-6935-4f71-bd5c-f0841240e63d","239751d8-5a64-4814-980e-f07ed1b4f46e",
+                "ce80ab5d-01b6-458b-8eb2-3aa4f9c01555","db415f39-a8a0-4ae9-8800-1790c6851d0a",
+                "8bc15a42-cd6d-4ae5-88a3-6be8549cb696","4fb16f83-a6ce-4366-a49e-e216838910ac",
+                "069a624e-eea3-40f9-b196-4d6ec48dcdca","9874825b-a625-4b9c-8ec8-378bedab0e2f",
+                "51bb1c21-403d-4ae1-be90-03635b87b767","5830adb7-cb32-4f97-8ef2-8232d1ca08e1",
+                "e9c70271-fb4e-4104-a301-9ab1c5f2c63b","8af79eb6-c201-4ac5-b3af-2ed47edf14a0",
+                "9ce2d713-bc6b-441a-b476-c0d68ee9bc79","a16bbbbc-9e7b-470e-91ca-8a525721589e",
+                "89a44d9a-ac72-4642-8c5e-a5eed7fb6717")
+
+
+
+#remove weird samples that brake the loading of files
+query$results[[1]] <- query$results[[1]] %>% filter(!(id %in% black_list ))
+
+#Download the data
+#GDCdownload(query = query)
+
+expdat=GDCprepare(query = query,
+                   save = TRUE,
+                   save.filename = "~/workspace/GDCdata/TARGET-AML.rda")
+clin_gbm <- GDCquery_clinic("TARGET-AML", "clinical")
+
+# find what ids overlaps in exp. dataset and clinic dataset 
+# and filter the data
+
+expdat$submitter_id <- expdat@colData@listData[["patient"]]
+
+submitter_ids_intersect <- intersect(expdat$submitter_id, clin_gbm$submitter_id)
+expdat_filt <- expdat[, expdat$submitter_id %in% submitter_ids_intersect]
+clin_gbm_filt <- clin_gbm[clin_gbm$submitter_id %in% submitter_ids_intersect, ]
+
+#convert the expr. data into dds object and perform variance stabilisation
+dds <- DESeqDataSet(expdat_filt, design = ~1)
+#dds <- DESeq(dds)
+PLAAT3_expr_vst <- vst(dds)["ENSG00000176485.12"]@assays@data@listData[[1]]
+
+# to identify potential outliers - use median Z score (Median Absolute Deviation). And all values that were deviated > 1.5 Z from the median.
+MAD <- median(abs(PLAAT3_expr_vst - median(PLAAT3_expr_vst)))
+mdf_z_scr <- 0.6745*(PLAAT3_expr_vst - median(PLAAT3_expr_vst))/MAD
+
+# stratify patients by the modified Z score.
+High_PLAAT3_expr_ids_mzs <- expdat_filt[,as.vector(mdf_z_scr > 1.5 )]@colData@listData[["patient"]]
+clin_gbm_filt$PLAAT3 <- "Low"
+clin_gbm_filt[clin_gbm_filt$submitter_id %in% High_PLAAT3_expr_ids_mzs ,"PLAAT3"] <- "High"
+clin_gbm_filt <- clin_gbm_filt[clin_gbm_filt$vital_status %in% c("Alive", "Dead"),]
+
+TCGAanalyze_survival(
+    data = clin_gbm_filt,
+    clusterCol = "PLAAT3",
+    main = "TARGET AML Low/High PLAAT3",
+    filename = "survival_TARGET-AML_Low_High_PLAAT3_1.5z.pdf",
+    risk.table = T,
+    conf.int = F,
+    height = 10,
+    width=10
+)
+```
+
+```{r "NCICCR-DLBCL"}
+##############
+# Load the data - create the query
+query <- GDCquery(
+    project = "NCICCR-DLBCL",
+    data.category = c("Transcriptome Profiling"),
+    data.type = "Gene Expression Quantification",
+    workflow.type = "STAR - Counts")
+
+# load the data
+#GDCdownload(query = query)
+
+# create the S4 object and save rda
+expdat <- GDCprepare(
+    query = query,
+    save = TRUE, 
+    save.filename = "~/workspace/GDCdata/NCICCR-DLBCL.rda")
+
+# load clinical data
+clin_gbm <- GDCquery_clinic("NCICCR-DLBCL", "clinical")
+
+# find what ids overlaps in exp. dataset and clinic dataset 
+# and filter the data
+expdat$sample <- sub(x = expdat$sample,
+                     pattern = "-sample",
+                     replacement = ""
+)
+
+submitter_ids_intersect <- intersect(expdat$sample, clin_gbm$submitter_id)
+expdat_filt <- expdat[, expdat$sample %in% submitter_ids_intersect]
+clin_gbm_filt <- clin_gbm[clin_gbm$submitter_id %in% submitter_ids_intersect, ]
+
+#convert the expr. data into dds object and perform variance stabilisation
+dds <- DESeqDataSet(expdat_filt, design = ~1)
+#dds <- DESeq(dds)
+PLAAT3_expr_vst <- vst(dds)["ENSG00000176485.12"]@assays@data@listData[[1]]
+
+# to identify potential outliers - use median Z score (Median Absolute Deviation). And all values that were deviated > 1.5 Z from the median.
+MAD <- median(abs(PLAAT3_expr_vst - median(PLAAT3_expr_vst)))
+mdf_z_scr <- 0.6745*(PLAAT3_expr_vst - median(PLAAT3_expr_vst))/MAD
+
+# stratify patients by the modified Z score.
+High_PLAAT3_expr_ids_mzs <- expdat_filt[,as.vector(mdf_z_scr > 1.5 )]@colData@listData[["sample"]]
+clin_gbm_filt$PLAAT3 <- "Low"
+clin_gbm_filt[clin_gbm_filt$submitter_id %in% High_PLAAT3_expr_ids_mzs ,"PLAAT3"] <- "High"
+clin_gbm_filt <- clin_gbm_filt[clin_gbm_filt$vital_status %in% c("Alive", "Dead"),]
+
+TCGAanalyze_survival(
+    data = clin_gbm_filt,
+    clusterCol = "PLAAT3",
+    main = "TARGET AML Low/High PLAAT3",
+    filename = "survival_NCICCR-DLBCL_Low_High_PLAAT3_1.5z.pdf",
+    risk.table = T,
+    conf.int = F,
+    height = 10,
+    width=10
+)
+
+```
+
+
+```{r "CGCI-BLGSP"}
+#CGCI-BLGSP
+##############
+# Load the data - create the query
+query <- GDCquery(
+    project = "CGCI-BLGSP",
+    data.category = c("Transcriptome Profiling"),
+    data.type = "Gene Expression Quantification",
+    workflow.type = "STAR - Counts")
+
+# load the data
+#GDCdownload(query = query)
+
+# create the S4 object and save rda
+expdat <- GDCprepare(
+    query = query,
+    save = TRUE, 
+    save.filename = "~/workspace/GDCdata/CGCI-BLGSP.rda")
+
+# load clinical data
+clin_gbm <- GDCquery_clinic("CGCI-BLGSP", "clinical")
+
+#IMPORT THESE
+#readTranscriptomeProfiling
+#GDCprepare
+#makeSEfromTranscriptomeProfilingSTAR
+#colDataPrepareBLGSP
+
+
+regex <- paste0("[:alnum:]{5}-[:alnum:]{2}-[:alnum:]{2}",
+                  "-[:alnum:]{5}")
+samples <- str_match(expdat@colData@listData[["barcode"]], regex )[,1]
+
+
+# find what ids overlaps in exp. dataset and clinic dataset 
+# and filter the data
+expdat$submitter_id <- expdat@colData@listData[["sample"]]
+
+submitter_ids_intersect <- intersect(expdat$submitter_id, clin_gbm$submitter_id)
+expdat_filt <- expdat[, expdat$submitter_id %in% submitter_ids_intersect]
+clin_gbm_filt <- clin_gbm[clin_gbm$submitter_id %in% submitter_ids_intersect, ]
+
+#convert the expr. data into dds object and perform variance stabilisation
+dds <- DESeqDataSet(expdat_filt, design = ~1)
+#dds <- DESeq(dds)
+PLAAT3_expr_vst <- vst(dds)["ENSG00000176485.12"]@assays@data@listData[[1]]
+
+# to identify potential outliers - use median Z score (Median Absolute Deviation). And all values that were deviated > 1.5 Z from the median.
+MAD <- median(abs(PLAAT3_expr_vst - median(PLAAT3_expr_vst)))
+mdf_z_scr <- 0.6745*(PLAAT3_expr_vst - median(PLAAT3_expr_vst))/MAD
+
+# stratify patients by the modified Z score.
+High_PLAAT3_expr_ids_mzs <- expdat_filt[,as.vector(mdf_z_scr > 1.5 )]@colData@listData[["submitter_id"]]
+clin_gbm_filt$PLAAT3 <- "Low"
+clin_gbm_filt[clin_gbm_filt$submitter_id %in% High_PLAAT3_expr_ids_mzs ,"PLAAT3"] <- "High"
+clin_gbm_filt <- clin_gbm_filt[clin_gbm_filt$vital_status %in% c("Alive", "Dead"),]
+
+TCGAanalyze_survival(
+    data = clin_gbm_filt,
+    clusterCol = "PLAAT3",
+    main = "TARGET CGCI-BLGSP Low/High PLAAT3",
+    filename = "survival_CGCI-BLGSP_Low_High_PLAAT3_1.5Z.pdf",
+    risk.table = T,
+    conf.int = F,
+    height = 10,
+    width=10
+)
+
+```
