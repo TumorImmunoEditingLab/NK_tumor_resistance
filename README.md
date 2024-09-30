@@ -12,6 +12,7 @@ ________
 ### Usage of the code:
 This is a supplementarry code that was used to analyze the data produced in the current research project. This code relies on usage of dockerized RStudio server. Build the image using the `_set_up_the_environment.sh` and run the `dockRstudio_v4.2.0_dev_run.sh`. You can connect to the created RStudioServer by typing the IP address of the HPC you are using followed by the port number (48900 in this case) in your browser, as follows: `localhost:48900`.
 
+The ATAC-seq is placed in a separate [repository](https://github.com/TumorImmunoEditingLab/NK_tumor_resistance_ATAC-seq).
 The code was developed and tested on Linux Debian v8 (jessie).
 
 
