@@ -54,7 +54,8 @@ BiocManager::install("apeglm")
 download.file(url = "https://ftp.ensembl.org/pub/release-102/gtf/mus_musculus/Mus_musculus.GRCm38.102.gtf.gz",
               destfile = "~/workspace/datasets/annotations/Mus_musculus.GRCm38.102.gtf.gz")
 R.utils::gunzip(filename = "~/workspace/datasets/annotations/Mus_musculus.GRCm38.102.gtf.gz")
+
 ######### 
-# PUT HERE PULLS FROM GEO & other
+# PUT HERE PULLS FROM GEO 
 
 
