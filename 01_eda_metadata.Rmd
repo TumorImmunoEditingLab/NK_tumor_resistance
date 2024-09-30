@@ -10,7 +10,7 @@ import::from(.from = dplyr, group_by, count)
 
 ```{r EDA metadata - loading objects, message=FALSE, eval=TRUE, include=TRUE, cache=TRUE}
 experiment_name="nk_tum_immunoedit_complete"
-output_dir <- paste0(results_dir, "/",experiment_name,"/") # "/home/rstudio/workspace/results_dir/nk_tum_immunoedit_complete/" #  
+output_dir <- paste0("/home/rstudio/workspace/results_dir/", experiment_name,"/") #  #  
 # results_dir defined in the nk_immunoediting.Rmd file
 
 eda_plots_dir <- paste0(output_dir, "eda_plots/")
@@ -33,7 +33,7 @@ if(!exists(precomputed_objects_file)){
 metadata <- tibble::as_tibble(SummarizedExperiment::colData(dds_filt))
 
 key_metadata <- metadata %>%
-  dplyr::select(experiment, condition_tp,condition, timepoint_cell_harvesting, day_cell_harvesting, cell_line_label, technical_replicate) 
+  dplyr::select(experiment, cell_line, condition, timepoint_cell_harvesting, day_cell_harvesting, cell_line_label, technical_replicate) 
 
 # saving metadata
 openxlsx::write.xlsx(metadata, file = file.path(output_dir, paste0(experiment_name, "_metadata.xlsx")))
