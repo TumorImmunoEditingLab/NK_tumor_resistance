@@ -20,6 +20,8 @@ import::from(.from = here::here("utils/generateResults.R"), "meanExprsPerGroup",
 
 # load DE tables from scRNA-seq work.
 # Downloaded from here:
+# https://immunogenomics.shinyapps.io/nkheme/
+untar("~/workspace/datasets/public_data.tar.gz", exdir = "~/workspace/datasets/")
 
 E697 <- read.delim("~/workspace/datasets/public_data/697_Expanded NK-treated.txt")
 kasumi2 <- read.delim("~/workspace/datasets/public_data/KASUMI2_Expanded NK-treated.txt")
